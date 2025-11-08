@@ -4,12 +4,12 @@ services:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.dev
     container_name: devflowfix-backend
-    restrat: unless-stopped
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgres+psycopg2://postgres:postgres@postgres:5432/vector_db
-      - ENVIRONMENt=development
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgres:5432/vector_db
+      - ENVIRONMENT=development
     depends_on:
       - postgres
     volumes:

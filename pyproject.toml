@@ -26,6 +26,7 @@ dependencies = [
     "python-jose[cryptography]>=3.5.0",
     "redis>=7.0.1",
     "slack-sdk>=3.37.0",
+    "sqlalchemy>=2.0.44",
     "sqlmodel>=0.0.27",
     "structlog>=25.5.0",
     "tenacity>=9.1.2",
