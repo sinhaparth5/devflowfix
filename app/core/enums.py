@@ -12,8 +12,8 @@ class IncidentSource(str, Enum):
     JENKINS = "jenkins"
     MANUAL = "manual"
 
-class Serverity(str, Enum):
-    """ Serverity level of the incident. """
+class Severity(str, Enum):
+    """ Severity level of the incident. """
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -218,13 +218,13 @@ def get_all_remediation_actions() -> list[str]:
     """ get list of all remediation actions values. """
     return [action.value for action in RemediationActionType]
 
-def is_critical_severity(severity: Serverity) -> bool:
+def is_critical_severity(severity: Severity) -> bool:
     """ Check if severity is critical or high """
-    return severity in [Serverity.CRITICAL, Serverity.HIGH]
+    return severity in [Severity.CRITICAL, Severity.HIGH]
 
 def requires_approval(
         confidence: float,
-        severity: Serverity,
+        severity: Severity,
         environment: Environment
 ) -> bool:
     """
@@ -239,7 +239,7 @@ def requires_approval(
         True if human approval is required 
     """
     # Always require approval for critical incidents in production
-    if environment == Environment.PRODUCTION and severity == Serverity.CRITICAL:
+    if environment == Environment.PRODUCTION and severity == Severity.CRITICAL:
         return True
     
     # Require approval for low confidence in production

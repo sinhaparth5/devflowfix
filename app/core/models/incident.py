@@ -8,7 +8,7 @@ from uuid import uuid5
 
 from app.core.enums import (
     IncidentSource,
-    Serverity,
+    Severity,
     Outcome,
     Fixability,
     FailureType
@@ -33,7 +33,7 @@ class Incident:
 
     # Source Information
     source: IncidentSource = IncidentSource.MANUAL
-    serverity: Serverity = Serverity.MEDIUM
+    severity: Severity = Severity.MEDIUM
 
     # Failure Details
     failure_type: Optional[FailureType] = None
@@ -231,7 +231,7 @@ class Incident:
             "incident_id": self.incident_id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "source": self.source.value if self.source else None,
-            "severity": self.serverity.value if self.serverity else None,
+            "severity": self.severity.value if self.severity else None,
             "failure_type": self.failure_type.value if self.failure_type else None,
             "error_log": self.error_log,
             "root_cause": self.root_cause,
@@ -248,6 +248,6 @@ class Incident:
         return (
             f"Incident(id={self.incident_id}, "
             f"source={self.source.value}, "
-            f"severity={self.serverity.value}, "
+            f"severity={self.severity.value}, "
             f"outcome={self.outcome.value if self.outcome else 'pending'}"
         )
