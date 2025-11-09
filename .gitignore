@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.DS_store
 
 # C extensions
 *.so
@@ -244,4 +245,3 @@ coverage.xml
 
 # Alembic
 alembic/versions/__pycache__/
-
