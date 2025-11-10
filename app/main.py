@@ -360,6 +360,15 @@ async def root():
 
 # Example router registration (uncomment when routers are ready):
 # from app.api.v1 import health, incidents, webhook, analytics, approvals
+from app.api.v1.webhook import router as webhook_router
+
+app.include_router(
+    webhook_router,
+    prefix="/api/v1",
+    tags=["Webhooks"]
+)
+
+logger.info("webhook_router_registered", prefix="/api/v1")
 # 
 # app.include_router(
 #     health.router,
