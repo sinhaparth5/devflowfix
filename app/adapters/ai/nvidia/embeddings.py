@@ -7,7 +7,6 @@ import structlog
 
 from app.adapters.ai.nvidia.client import NVIDIAEmbeddingClient
 from app.adapters.ai.nvidia.cache import EmbeddingCache
-from app.exceptions import NVIDIAAPIError
 
 logger = structlog.get_logger(__name__)
 
