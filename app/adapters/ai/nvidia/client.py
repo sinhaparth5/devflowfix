@@ -215,7 +215,7 @@ class NVIDIAClient:
         """ Async context manager exit. """
         await self.close()
 
-class NVIDIALMMClient(NVIDIAClient):
+class NVIDIALLMClient(NVIDIAClient):
     """
     Specialezed client for NVIDIA LLM API
 
