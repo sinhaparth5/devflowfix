@@ -6,7 +6,7 @@ services:
     container_name: devflowfix-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8001:8001"
     environment:
       - DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgres:5432/vector_db
       - ENVIRONMENT=development

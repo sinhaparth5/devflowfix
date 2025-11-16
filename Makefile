@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "CodeHealer - Available Commands:"
+	@echo "DevFlowFix - Available Commands:"
 	@echo "  make install       - Install dependencies with uv"
 	@echo "  make dev           - Start development server"
 	@echo "  make test          - Run tests"
@@ -53,7 +53,7 @@ clean:
 
 docker-build:
 	@echo "Building Docker image..."
-	docker build -f Dockerfile.lambda -t codehealer:latest .
+	docker build -f Dockerfile.lambda -t devflowfix:latest .
 
 docker-up:
 	@echo "Starting Docker Compose stack..."

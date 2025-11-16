@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from datetime import datetime
-from typing import Optional, Generic, TypeVar
+from typing import Optional, Generic, TypeVar, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 from app.core.enums import IncidentSource, Severity, Outcome, FailureType
@@ -117,7 +117,7 @@ class ValidationError(BaseModel):
     """ Validation error details. """    
     field: str
     message: str
-    value: Optional[any] = None
+    value: Optional[Any] = None
 
 class ValidationErrorResponse(BaseModel):
     """ Response for validation errors. """    

@@ -78,6 +78,12 @@ class IncidentTable(SQLModel, table=True):
         Index('idx_incidents_source_severity', 'source', 'severity'),
         Index('idx_incidents_outcome_created', 'outcome', 'created_at'),
         Index('idx_incidents_confidence_desc', desc('confidence')),
+        Index('idx_incidents_embeddings_ivfflat',
+              'embedding',
+              postgresql_using='ivfflat',
+              postgresql_with={'lists': 100},
+              postgresql_ops={'embedding': 'vector_cosine_ops'}
+              ),
     )
 
 class FeedbackTable(SQLModel, table=True):
