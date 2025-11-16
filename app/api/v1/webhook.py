@@ -3,13 +3,17 @@
 
 from typing import Dict, Any
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, status, Header
+from fastapi import APIRouter, Request, HTTPException, status, Header, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 import structlog
 
 from app.core.schemas.webhook import WebhookPayload, WebhookResponse
 from app.core.config import settings
+from app.core.enums import IncidentSource, Severity, FailureType, Fixability, Outcome
 from app.adapters.external.github.webhooks import GitHubWebhookClient, WebhookSignatureError
+from app.adapters.database.postgres.repositories.incident import IncidentRepository
+from app.dependencies import get_db
 
 logger = structlog.get_logger(__name__)
 
@@ -123,6 +127,7 @@ async def receive_github_webhook(
     x_github_event: str | None = Header(None),
     x_github_delivery: str | None = Header(None),
     x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256"),
+    db: Session = Depends(get_db),
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events with HMAC-SHA256 signature verification.
@@ -241,9 +246,97 @@ async def receive_github_webhook(
         payload=payload,
     )
     
-    # TODO: Queue the event for async processing
-    # TODO: Extract failure details if it's a workflow_run failure
-    # TODO: Trigger incident analysis and remediation pipeline
+    # Process workflow_run failures
+    if x_github_event == "workflow_run":
+        workflow_run = payload.get("workflow_run", {})
+        conclusion = workflow_run.get("conclusion")
+        status_value = workflow_run.get("status")
+        
+        # Check if it's a failure
+        if status_value == "completed" and conclusion in ["failure", "timed_out", "action_required"]:
+            logger.info(
+                "github_workflow_failure_detected",
+                incident_id=incident_id,
+                workflow_name=workflow_run.get("name"),
+                conclusion=conclusion,
+            )
+            
+            # Extract failure details
+            repository = payload.get("repository", {})
+            repo_name = repository.get("full_name", "unknown")
+            
+            # Create incident in database
+            try:
+                incident_repo = IncidentRepository(db)
+                
+                # Build context
+                context = {
+                    "repository": repo_name,
+                    "workflow_name": workflow_run.get("name"),
+                    "workflow_id": workflow_run.get("workflow_id"),
+                    "run_id": workflow_run.get("id"),
+                    "run_number": workflow_run.get("run_number"),
+                    "branch": workflow_run.get("head_branch"),
+                    "commit_sha": workflow_run.get("head_sha"),
+                    "commit_message": workflow_run.get("head_commit", {}).get("message"),
+                    "author": workflow_run.get("head_commit", {}).get("author", {}).get("name"),
+                    "html_url": workflow_run.get("html_url"),
+                    "started_at": workflow_run.get("run_started_at"),
+                    "completed_at": workflow_run.get("updated_at"),
+                }
+                
+                # Determine severity based on branch
+                branch = workflow_run.get("head_branch", "")
+                if branch in ["main", "master", "production"]:
+                    severity = Severity.CRITICAL
+                elif branch in ["staging", "develop"]:
+                    severity = Severity.HIGH
+                else:
+                    severity = Severity.MEDIUM
+                
+                # Build error log
+                error_log = f"Workflow '{workflow_run.get('name')}' failed with conclusion: {conclusion}\n"
+                error_log += f"Repository: {repo_name}\n"
+                error_log += f"Branch: {branch}\n"
+                error_log += f"Commit: {workflow_run.get('head_sha', '')[:8]}\n"
+                error_log += f"URL: {workflow_run.get('html_url')}\n"
+                
+                # Create incident
+                db_incident = incident_repo.create(
+                    incident_id=incident_id,
+                    timestamp=datetime.fromisoformat(workflow_run.get("run_started_at", datetime.utcnow().isoformat()).replace('Z', '+00:00')),
+                    source=IncidentSource.GITHUB.value,
+                    severity=severity.value,
+                    failure_type=FailureType.BUILD_FAILURE.value if "build" in workflow_run.get("name", "").lower() else FailureType.TEST_FAILURE.value,
+                    error_log=error_log,
+                    error_message=f"Workflow failed: {conclusion}",
+                    context=context,
+                    fixability=Fixability.UNKNOWN.value,
+                    raw_payload=payload,
+                    tags=[f"repo:{repo_name}", f"branch:{branch}", f"workflow:{workflow_run.get('name')}"]
+                )
+                
+                db.commit()
+                
+                logger.info(
+                    "incident_created",
+                    incident_id=incident_id,
+                    repository=repo_name,
+                    workflow=workflow_run.get("name"),
+                    severity=severity.value,
+                )
+                
+            except Exception as e:
+                logger.error(
+                    "incident_creation_failed",
+                    incident_id=incident_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                # Don't fail the webhook - just log the error
+                # db.rollback() will be handled by the dependency cleanup
+    
+    # TODO: Queue the event for async processing (analysis & remediation)
     
     logger.info(
         "github_webhook_processed",
