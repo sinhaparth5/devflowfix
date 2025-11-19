@@ -22,53 +22,42 @@ class Incident:
     This is a domain model, not a database model. It contains business logic
     and is independent of infrastructure concerns.
     """
-    # Identity
     incident_id: str = field(default_factory=lambda: f"inc_{uuid5().hex[:12]}")
 
-    # Timestamps
     timestamp: datetime = field(default_factory=datetime.utcnow)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     resolved_at: Optional[datetime] = None
 
-    # Source Information
     source: IncidentSource = IncidentSource.MANUAL
     severity: Severity = Severity.MEDIUM
 
-    # Failure Details
     failure_type: Optional[FailureType] = None
     error_log: str = ""
     error_message: Optional[str] = None
     stack_trace: Optional[str] = None
 
-    # Context (repository, branch, pod name, etc.)
     context: dict = field(default_factory=dict)
 
-    # Analysis Results
     root_cause: Optional[str] = None
     fixability: Optional[Fixability] = None
     confidence: Optional[float] = None
 
-    # Similar Incidents (from RAG)
     similar_incidents: list = field(default_factory=list)
 
-    # Remediation
     remediation_plan: Optional[dict] = None
     remediation_executed: bool = False
-    remediation_start_time = Optional[datetime] = None
-    remediation_end_time = Optional[datetime] = None
+    remediation_start_time: Optional[datetime] = None
+    remediation_end_time: Optional[datetime] = None
 
-    # Outcome
     outcome: Optional[Outcome] = None
     outcome_message: Optional[str] = None
     resolution_time_seconds: Optional[int] = None
 
-    # Human Feedback
     human_feedback: Optional[dict] = None
     approved_by: Optional[str] = None
     approved_timestamp: Optional[datetime] = None
 
-    # Metadata
     raw_payload: dict = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
 
