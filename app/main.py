@@ -3,7 +3,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -104,7 +104,7 @@ app.add_middleware(
 # 3. CORS (before any request processing)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -360,15 +360,23 @@ async def root():
 
 # Example router registration (uncomment when routers are ready):
 # from app.api.v1 import health, incidents, webhook, analytics, approvals
-from app.api.v1.webhook import router as webhook_router
+from app.api.v1.webhook import router as webhook_router, receive_github_webhook
 
+# Register webhook router at /api/v1/webhook/*
 app.include_router(
     webhook_router,
     prefix="/api/v1",
     tags=["Webhooks"]
 )
 
-logger.info("webhook_router_registered", prefix="/api/v1")
+# Also register GitHub webhook at root /webhooks/github for convenience
+# Direct route registration for the commonly expected path
+@app.post("/webhooks/github", tags=["Webhooks"])
+async def github_webhook_root(request: Request, x_github_event: str | None = Header(None), x_github_delivery: str | None = Header(None), x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256")):
+    """GitHub webhook endpoint at root level (redirects to main handler)."""
+    return await receive_github_webhook(request, x_github_event, x_github_delivery, x_hub_signature_256)
+
+logger.info("webhook_routers_registered", prefixes=["/api/v1/webhook", "/webhooks/github"])
 # 
 # app.include_router(
 #     health.router,
