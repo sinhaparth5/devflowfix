@@ -499,9 +499,9 @@ class Settings(BaseSettings):
     )
     
     # CORS settings
-    cors_origins: List[str] = Field(
-        default=["*"],
-        description="Allowed CORS origins (use specific origins in production)"
+    cors_origins: str = Field(
+        default="*",
+        description="Allowed CORS origins (comma-separated or single value)"
     )
     
     cors_allow_credentials: bool = Field(
@@ -605,10 +605,10 @@ class Settings(BaseSettings):
     # Validators
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: Any) -> List[str]:
+    def parse_cors_origins(cls, v: Any) -> str:
         """Parse CORS origins from string or list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+        if isinstance(v, list):
+            return ",".join(v)
         return v
     
     @field_validator("database_url")
@@ -665,6 +665,20 @@ class Settings(BaseSettings):
             return self.high_confidence_threshold
         else:
             return self.min_confidence_threshold
+    
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """
+        Get CORS origins as a list.
+        
+        Returns:
+            List of allowed CORS origins
+        """
+        if isinstance(self.cors_origins, str):
+            if self.cors_origins.strip() == "*":
+                return ["*"]
+            return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [self.cors_origins]
     
     @property
     def database(self) -> DatabaseSettings:

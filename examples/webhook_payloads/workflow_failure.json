@@ -1,0 +1,126 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 1234567890,
+    "name": "CI",
+    "node_id": "WFR_kwDOABCDEFGHIJKL",
+    "head_branch": "main",
+    "head_sha": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
+    "path": ".github/workflows/ci.yml",
+    "display_title": "CI Pipeline",
+    "run_number": 42,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "failure",
+    "workflow_id": 123456,
+    "check_suite_id": 987654321,
+    "check_suite_node_id": "CS_kwDOABCDEFGHIJKL",
+    "url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890",
+    "html_url": "https://github.com/owner/repo/actions/runs/1234567890",
+    "created_at": "2025-11-16T10:00:00Z",
+    "updated_at": "2025-11-16T10:05:30Z",
+    "run_started_at": "2025-11-16T10:00:00Z",
+    "jobs_url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890/jobs",
+    "logs_url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890/logs",
+    "check_suite_url": "https://api.github.com/repos/owner/repo/check-suites/987654321",
+    "artifacts_url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890/artifacts",
+    "cancel_url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890/cancel",
+    "rerun_url": "https://api.github.com/repos/owner/repo/actions/runs/1234567890/rerun",
+    "run_attempt": 1,
+    "referenced_workflows": [],
+    "head_commit": {
+      "id": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
+      "tree_id": "t1r2e3e4i5d6h7e8r9e0",
+      "message": "Fix critical bug in user authentication",
+      "timestamp": "2025-11-16T09:59:45Z",
+      "author": {
+        "name": "John Doe",
+        "email": "john.doe@example.com"
+      },
+      "committer": {
+        "name": "John Doe",
+        "email": "john.doe@example.com"
+      }
+    },
+    "repository": {
+      "id": 123456789,
+      "node_id": "R_kgDOABCDEFG",
+      "name": "repo",
+      "full_name": "owner/repo",
+      "private": false,
+      "owner": {
+        "login": "owner",
+        "id": 9876543,
+        "node_id": "U_kgDOABCDEFG",
+        "avatar_url": "https://avatars.githubusercontent.com/u/9876543?v=4",
+        "type": "Organization",
+        "url": "https://api.github.com/users/owner"
+      },
+      "html_url": "https://github.com/owner/repo",
+      "description": "Production application repository",
+      "url": "https://api.github.com/repos/owner/repo",
+      "default_branch": "main"
+    },
+    "head_repository": {
+      "id": 123456789,
+      "node_id": "R_kgDOABCDEFG",
+      "name": "repo",
+      "full_name": "owner/repo"
+    }
+  },
+  "repository": {
+    "id": 123456789,
+    "node_id": "R_kgDOABCDEFG",
+    "name": "repo",
+    "full_name": "owner/repo",
+    "private": false,
+    "owner": {
+      "login": "owner",
+      "id": 9876543,
+      "node_id": "U_kgDOABCDEFG",
+      "avatar_url": "https://avatars.githubusercontent.com/u/9876543?v=4",
+      "type": "Organization",
+      "url": "https://api.github.com/users/owner"
+    },
+    "html_url": "https://github.com/owner/repo",
+    "description": "Production application repository",
+    "fork": false,
+    "url": "https://api.github.com/repos/owner/repo",
+    "created_at": "2020-01-15T08:30:00Z",
+    "updated_at": "2025-11-16T10:00:00Z",
+    "pushed_at": "2025-11-16T10:00:00Z",
+    "size": 45678,
+    "stargazers_count": 234,
+    "watchers_count": 234,
+    "language": "Python",
+    "has_issues": true,
+    "has_projects": true,
+    "has_downloads": true,
+    "has_wiki": true,
+    "has_pages": false,
+    "forks_count": 45,
+    "open_issues_count": 12,
+    "default_branch": "main"
+  },
+  "organization": {
+    "login": "owner",
+    "id": 9876543,
+    "node_id": "O_kgDOABCDEFG",
+    "url": "https://api.github.com/orgs/owner",
+    "repos_url": "https://api.github.com/orgs/owner/repos",
+    "events_url": "https://api.github.com/orgs/owner/events",
+    "hooks_url": "https://api.github.com/orgs/owner/hooks",
+    "issues_url": "https://api.github.com/orgs/owner/issues",
+    "members_url": "https://api.github.com/orgs/owner/members{/member}",
+    "public_members_url": "https://api.github.com/orgs/owner/public_members{/member}",
+    "avatar_url": "https://avatars.githubusercontent.com/u/9876543?v=4",
+    "description": "Engineering organization"
+  },
+  "sender": {
+    "login": "github-actions[bot]",
+    "id": 41898282,
+    "node_id": "MDM6Qm90NDE4OTgyODI=",
+    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+    "type": "Bot"
+  }
+}

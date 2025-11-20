@@ -153,7 +153,6 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_remediation_history_incident_id'), ['incident_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_remediation_history_success'), ['success'], unique=False)
 
-    op.drop_table('test_vectors')
     # ### end Alembic commands ###
 
 
