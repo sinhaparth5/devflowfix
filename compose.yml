@@ -15,7 +15,7 @@ services:
       - postgres
     volumes:
       - ./app:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   postgres:
     image: pgvector/pgvector:pg17
