@@ -24,7 +24,7 @@ class RemediationPlan:
     
     # Prerequisites
     requires_approval: bool = False
-    requires_rollback_snapshot = True
+    requires_rollback_snapshot: bool = True
 
     # Validation
     pre_validation_checks: list[str] = field(default_factory=list)
