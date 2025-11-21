@@ -3,6 +3,12 @@
 
 """GitHub integration adapters."""
 
+from app.adapters.external.github.client import GitHubClient
+from app.adapters.external.github.actions import (
+    GitHubActionsAdapter,
+    WorkflowStatus,
+    WorkflowConclusion,
+)
 from app.adapters.external.github.webhooks import (
     GitHubWebhookClient,
     GitHubWebhookError,
@@ -12,6 +18,10 @@ from app.adapters.external.github.webhooks import (
 )
 
 __all__ = [
+    "GitHubClient",
+    "GitHubActionsAdapter",
+    "WorkflowStatus",
+    "WorkflowConclusion",
     "GitHubWebhookClient",
     "GitHubWebhookError",
     "WebhookSignatureError",
