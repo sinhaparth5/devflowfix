@@ -66,7 +66,7 @@ class AISettings(BaseSettings):
     nvidia_api_key: Optional[str] = Field(default=None, alias="NVIDIA_API_KEY")
     embedding_model: str = Field(default="nvidia/nv-embed-v1", alias="EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=768, alias="EMBEDDING_DIMENSIONS")
-    llm_model: str = Field(default="gpt-4-turbo-preview", alias="LLM_MODEL")
+    llm_model: str = Field(default="nvidia/llama-3.1-nemotron-70b-instruct", alias="LLM_MODEL")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2000, alias="LLM_MAX_TOKENS")
     
