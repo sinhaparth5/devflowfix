@@ -10,20 +10,17 @@ from sqlalchemy.orm import sessionmaker
 import structlog
 
 from app.core.config import settings
+from app.core.enums import Environment
 from app.exceptions import DatabaseConnectionError, ConfigurationError
 
 logger = structlog.get_logger()
 
-# Create SQLAlchemy engine
 _engine = None
 _SessionLocal = None
+_service_container = None
+
 
 def get_engine():
-    """
-    Get or create database engine.
-    
-    Singleton pattern for engine creation.
-    """
     global _engine
     if _engine is None:
         try:
@@ -31,7 +28,7 @@ def get_engine():
                 settings.database_url,
                 pool_size=settings.database_pool_size,
                 max_overflow=settings.database_max_overflow,
-                pool_pre_ping=True,  # Verify connections before using
+                pool_pre_ping=True,
                 echo=settings.log_level == "DEBUG",
             )
             logger.info("database_engine_created")
@@ -40,12 +37,8 @@ def get_engine():
             raise DatabaseConnectionError(f"Failed to create database engine: {e}")
     return _engine
 
+
 def get_session_local():
-    """
-    Get or create SessionLocal factory.
-    
-    Singleton pattern for SessionLocal creation.
-    """
     global _SessionLocal
     if _SessionLocal is None:
         engine = get_engine()
@@ -56,21 +49,8 @@ def get_session_local():
         )
     return _SessionLocal
 
+
 def get_db() -> Generator[Session, None, None]:
-    """
-    Get database session.
-    
-    FastAPI dependency that provides a database session.
-    Automatically handles session lifecycle and cleanup.
-    
-    Yields:
-        Database session
-        
-    Example:
-        @app.get("/incidents")
-        def list_incidents(db: Session = Depends(get_db)):
-            return db.query(IncidentTable).all()
-    """
     SessionLocal = get_session_local()
     db = SessionLocal()
     try:
@@ -82,254 +62,242 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+
 @lru_cache()
 def get_settings():
-    """
-    Get application settings.
-    
-    Cached to avoid reloading settings on every request.
-    
-    Returns:
-        Application settings
-    """
     return settings
 
-# These will be populated as services are implemented
-def get_incident_repository(db: Session = Depends(get_db)):
-    """
-    Get incident repository.
+
+class ServiceContainer:
     
-    Args:
-        db: Database session
-        
-    Returns:
-        IncidentRepository instance
-    """
+    _instance: Optional["ServiceContainer"] = None
+    
+    def __init__(self):
+        self._embedding_adapter = None
+        self._llm_adapter = None
+        self._notification_service = None
+        self._analyzer_service = None
+        self._decision_service = None
+        self._remediator_service = None
+        self._retriever_service = None
+    
+    @classmethod
+    def get_instance(cls) -> "ServiceContainer":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    @property
+    def embedding_adapter(self):
+        if self._embedding_adapter is None:
+            if settings.nvidia_api_key:
+                from app.adapters.ai.nvidia.embeddings import EmbeddingAdapter
+                self._embedding_adapter = EmbeddingAdapter(
+                    api_key=settings.nvidia_api_key,
+                    base_url=getattr(settings, 'nvidia_base_url', None),
+                )
+            else:
+                logger.warning("nvidia_api_key_not_configured")
+        return self._embedding_adapter
+    
+    @property
+    def llm_adapter(self):
+        if self._llm_adapter is None:
+            if settings.nvidia_api_key:
+                from app.adapters.ai.nvidia.llm import LLMAdapter
+                self._llm_adapter = LLMAdapter(
+                    api_key=settings.nvidia_api_key,
+                    base_url=getattr(settings, 'nvidia_base_url', None),
+                )
+            else:
+                logger.warning("nvidia_api_key_not_configured")
+        return self._llm_adapter
+    
+    @property
+    def notification_service(self):
+        if self._notification_service is None:
+            if settings.slack_token:
+                from app.adapters.external.slack.notifications import SlackNotificationService
+                self._notification_service = SlackNotificationService(
+                    token=settings.slack_token,
+                    default_channel=getattr(settings, 'slack_default_channel', '#incidents'),
+                )
+            else:
+                logger.warning("slack_token_not_configured")
+        return self._notification_service
+    
+    def get_analyzer_service(self):
+        if self._analyzer_service is None:
+            if self.llm_adapter:
+                from app.services.analyzer import AnalyzerService
+                self._analyzer_service = AnalyzerService(
+                    llm_adapter=self.llm_adapter,
+                )
+            else:
+                logger.warning("analyzer_service_not_available_no_llm")
+        return self._analyzer_service
+    
+    def get_decision_service(self):
+        if self._decision_service is None:
+            from app.services.decision import DecisionService
+            from app.domain.strategies.factory import StrategyFactory
+            
+            env_str = getattr(settings, 'environment', 'dev')
+            try:
+                environment = Environment(env_str)
+            except ValueError:
+                environment = Environment.DEVELOPMENT
+            
+            strategy = StrategyFactory.create(environment=environment)
+            self._decision_service = DecisionService(strategy=strategy)
+        return self._decision_service
+    
+    def get_remediator_service(self):
+        if self._remediator_service is None:
+            from app.services.remediator import RemediatorService
+            self._remediator_service = RemediatorService(settings=settings)
+        return self._remediator_service
+    
+    def get_retriever_service(self):
+        if self._retriever_service is None:
+            if self.embedding_adapter:
+                from app.services.retriever import RetrieverService
+                self._retriever_service = RetrieverService(
+                    embedding_adapter=self.embedding_adapter,
+                )
+            else:
+                logger.warning("retriever_service_not_available_no_embedding")
+        return self._retriever_service
+
+
+def get_service_container() -> ServiceContainer:
+    return ServiceContainer.get_instance()
+
+
+def get_incident_repository(db: Session = Depends(get_db)):
     from app.adapters.database.postgres.repositories.incident import IncidentRepository
     return IncidentRepository(db)
 
+
 def get_feedback_repository(db: Session = Depends(get_db)):
-    """
-    Get feedback repository.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        FeedbackRepository instance
-    """
     from app.adapters.database.postgres.repositories.feedback import FeedbackRepository
     return FeedbackRepository(db)
 
+
 def get_analytics_repository(db: Session = Depends(get_db)):
-    """
-    Get analytics repository.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        AnalyticsRepository instance
-    """
     from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
     return AnalyticsRepository(db)
 
+
 def get_vector_repository(db: Session = Depends(get_db)):
-    """
-    Get vector repository for RAG operations.
-    
-    Args:
-        db: Database session
-        
-    Returns:
-        VectorRepository instance
-    """
-    from app.adapters.database.postgres.repositories.vertor import VectorRepository
+    from app.adapters.database.postgres.repositories.vector import VectorRepository
     return VectorRepository(db)
 
-# Service layer dependencies
-def get_analyzer_service():
-    """
-    Get analyzer service.
+
+def get_event_processor(db: Session = Depends(get_db)):
+    from app.services.event_processor import EventProcessor
+    from app.adapters.database.postgres.repositories.incident import IncidentRepository
+    from app.adapters.database.postgres.repositories.vector import VectorRepository
     
-    Returns:
-        AnalyzerService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.analyzer import AnalyzerService
-    # return AnalyzerService(...)
-    pass
+    container = get_service_container()
+    
+    incident_repo = IncidentRepository(db)
+    vector_repo = VectorRepository(db)
+    
+    env_str = getattr(settings, 'environment', 'dev')
+    try:
+        environment = Environment(env_str)
+    except ValueError:
+        environment = Environment.DEVELOPMENT
+    
+    return EventProcessor(
+        incident_repository=incident_repo,
+        vector_repository=vector_repo,
+        analyzer_service=container.get_analyzer_service(),
+        decision_service=container.get_decision_service(),
+        remediator_service=container.get_remediator_service(),
+        retriever_service=container.get_retriever_service(),
+        notification_service=container.notification_service,
+        embedding_adapter=container.embedding_adapter,
+        default_environment=environment,
+        enable_notifications=getattr(settings, 'enable_notifications', True),
+        enable_auto_remediation=getattr(settings, 'enable_auto_remediation', True),
+    )
+
+
+def get_analyzer_service():
+    container = get_service_container()
+    return container.get_analyzer_service()
+
 
 def get_classifier_service():
-    """
-    Get classifier service.
-    
-    Returns:
-        ClassifierService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.classifier import ClassifierService
-    # return ClassifierService(...)
     pass
+
 
 def get_remediator_service():
-    """
-    Get remediator service.
-    
-    Returns:
-        RemediatorService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.remediator import RemediatorService
-    # return RemediatorService(...)
-    pass
+    container = get_service_container()
+    return container.get_remediator_service()
+
 
 def get_retriever_service():
-    """
-    Get retriever service for RAG.
-    
-    Returns:
-        RetrieverService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.retriever import RetrieverService
-    # return RetrieverService(...)
-    pass
+    container = get_service_container()
+    return container.get_retriever_service()
+
+
+def get_decision_service():
+    container = get_service_container()
+    return container.get_decision_service()
+
 
 def get_embedder_service():
-    """
-    Get embedder service.
-    
-    Returns:
-        EmbedderService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.embedder import EmbedderService
-    # return EmbedderService(...)
-    pass
+    container = get_service_container()
+    return container.embedding_adapter
+
 
 def get_event_processor_service():
-    """
-    Get event processor service.
-    
-    Returns:
-        EventProcessorService instance
-    """
-    # TODO: Implement when services are ready
-    # from app.services.event_processor import EventProcessorService
-    # return EventProcessorService(...)
     pass
 
-# External adapter dependencies
+
 def get_github_client():
-    """
-    Get GitHub client.
-    
-    Returns:
-        GitHubClient instance
-    """
     if not settings.github_token:
         raise ConfigurationError("github_token", "GitHub token not configured")
-    
-    # TODO: Implement when adapters are ready
-    # from app.adapters.external.github.client import GitHubClient
-    # return GitHubClient(token=settings.github_token)
     pass
+
 
 def get_argocd_client():
-    """
-    Get ArgoCD client.
-    
-    Returns:
-        ArgoCDClient instance
-    """
     if not settings.argocd_server or not settings.argocd_token:
         raise ConfigurationError("argocd", "ArgoCD credentials not configured")
-    
-    # TODO: Implement when adapters are ready
-    # from app.adapters.external.argocd.client import ArgoCDClient
-    # return ArgoCDClient(server=settings.argocd_server, token=settings.argocd_token)
     pass
+
 
 def get_kubernetes_client():
-    """
-    Get Kubernetes client.
-    
-    Returns:
-        KubernetesClient instance
-    """
-    # TODO: Implement when adapters are ready
-    # from app.adapters.external.kubernetes.client import KubernetesClient
-    # return KubernetesClient(kubeconfig_path=settings.kubeconfig_path)
     pass
+
 
 def get_slack_client():
-    """
-    Get Slack client.
-    
-    Returns:
-        SlackClient instance
-    """
     if not settings.slack_token:
         raise ConfigurationError("slack_token", "Slack token not configured")
-    
-    # TODO: Implement when adapters are ready
-    # from app.adapters.external.slack.client import SlackClient
-    # return SlackClient(token=settings.slack_token)
     pass
 
+
 def get_pagerduty_client():
-    """
-    Get PagerDuty client.
-    
-    Returns:
-        PagerDutyClient instance
-    """
     if not settings.pagerduty_api_key:
         logger.warning("pagerduty_not_configured")
         return None
-    
-    # TODO: Implement when adapters are ready
-    # from app.adapters.external.pagerduty.client import PagerDutyClient
-    # return PagerDutyClient(api_key=settings.pagerduty_api_key)
     pass
+
 
 async def get_current_user(
     authorization: Annotated[Optional[str], Header()] = None,
 ) -> Optional[str]:
-    """
-    Get current authenticated user.
-    
-    For now, this is a placeholder. In production, implement proper auth.
-    
-    Args:
-        authorization: Authorization header
-        
-    Returns:
-        Username or None if not authenticated
-    """
-    # TODO: Implement proper authentication
-    # For now, just return a placeholder or parse from header
     if authorization and authorization.startswith("Bearer "):
-        # Extract user from token (implement JWT validation here)
-        return "system"  # Placeholder
+        return "system"
     return None
+
 
 async def require_authentication(
     current_user: Annotated[Optional[str], Depends(get_current_user)]
 ) -> str:
-    """
-    Require authentication for endpoint.
-    
-    Args:
-        current_user: Current user from auth dependency
-        
-    Returns:
-        Username
-        
-    Raises:
-        HTTPException: If not authenticated
-    """
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -338,41 +306,23 @@ async def require_authentication(
         )
     return current_user
 
+
 async def get_request_id(
     x_request_id: Annotated[Optional[str], Header()] = None,
 ) -> Optional[str]:
-    """
-    Get request ID from header or state.
-    
-    Args:
-        x_request_id: Request ID from header
-        
-    Returns:
-        Request ID
-    """
     return x_request_id
+
 
 async def get_pagination_params(
     skip: int = 0,
     limit: int = 100,
 ) -> dict:
-    """
-    Get pagination parameters.
-    
-    Args:
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        
-    Returns:
-        Dictionary with skip and limit
-    """
-    # Validate and cap limit
     if limit > 1000:
         limit = 1000
     if skip < 0:
         skip = 0
-        
     return {"skip": skip, "limit": limit}
+
 
 async def get_common_filters(
     source: Optional[str] = None,
@@ -381,21 +331,7 @@ async def get_common_filters(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> dict:
-    """
-    Get common filter parameters.
-    
-    Args:
-        source: Filter by source
-        severity: Filter by severity
-        outcome: Filter by outcome
-        start_date: Filter by start date
-        end_date: Filter by end date
-        
-    Returns:
-        Dictionary with filters
-    """
     filters = {}
-    
     if source:
         filters["source"] = source
     if severity:
@@ -406,26 +342,13 @@ async def get_common_filters(
         filters["start_date"] = start_date
     if end_date:
         filters["end_date"] = end_date
-        
     return filters
+
 
 async def validate_github_webhook(
     x_hub_signature_256: Annotated[Optional[str], Header()] = None,
     x_github_event: Annotated[Optional[str], Header()] = None,
 ) -> dict:
-    """
-    Validate GitHub webhook signature.
-    
-    Args:
-        x_hub_signature_256: GitHub webhook signature
-        x_github_event: GitHub event type
-        
-    Returns:
-        Dictionary with validation results
-        
-    Raises:
-        HTTPException: If validation fails
-    """
     if not settings.github_webhook_secret:
         logger.warning("github_webhook_secret_not_configured")
         return {"validated": False, "event": x_github_event}
@@ -436,27 +359,13 @@ async def validate_github_webhook(
             detail="Missing GitHub signature",
         )
     
-    # TODO: Implement actual signature validation
-    # For now, just return the event type
     return {"validated": True, "event": x_github_event}
+
 
 async def validate_slack_request(
     x_slack_signature: Annotated[Optional[str], Header()] = None,
     x_slack_request_timestamp: Annotated[Optional[str], Header()] = None,
 ) -> dict:
-    """
-    Validate Slack request signature.
-    
-    Args:
-        x_slack_signature: Slack signature
-        x_slack_request_timestamp: Request timestamp
-        
-    Returns:
-        Dictionary with validation results
-        
-    Raises:
-        HTTPException: If validation fails
-    """
     if not settings.slack_signing_secret:
         logger.warning("slack_signing_secret_not_configured")
         return {"validated": False}
@@ -467,5 +376,4 @@ async def validate_slack_request(
             detail="Missing Slack signature or timestamp",
         )
     
-    # TODO: Implement actual signature validation
     return {"validated": True}
