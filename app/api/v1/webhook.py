@@ -1,152 +1,199 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, status, Header, Depends
+from fastapi import APIRouter, Request, HTTPException, status, Header, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import structlog
 
 from app.core.schemas.webhook import WebhookPayload, WebhookResponse
 from app.core.config import settings
-from app.core.enums import IncidentSource, Severity, FailureType, Fixability, Outcome
-from app.adapters.external.github.webhooks import GitHubWebhookClient, WebhookSignatureError
-from app.adapters.database.postgres.repositories.incident import IncidentRepository
-from app.dependencies import get_db
+from app.core.enums import IncidentSource, Severity, FailureType
+from app.services.event_processor import EventProcessor
+from app.dependencies import get_db, get_event_processor
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
-@router.post(
-    "/webhook",
-    response_model=WebhookResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Generic webhook endpoint",
-    description="Accepts webhook event from external system",
-    tags=["Webhook"],
-)
-async def receive_webhook(
-    request: Request,
-    payload: Dict[str, Any],
-    x_webhook_source: str | None = Header(None, description="Webhook source identifier"),
-    x_github_event: str | None = Header(None, description="GitHub event page"),
-    x_signature: str | None = Header(None, description="GitHub signature"),
-) -> WebhookResponse:
-    """
-    Receive and process webhook events.
 
-    This endpoint accepts webhook from various source and logs them for processing.
-    In production, this would trigger event processing pipelines.
-
-    Args:
-        request: FastAPI request object
-        payload: JSON payload from webhook
-        x_webhook_source: Optional source identifier
-        x_github_event: GitHub-specific event type
-        x_signatiure: Webhook signature for verification
-
-    Returns:
-        WebhookRespone with acknowledgement
-
-    Raises:
-        HTTPException: If payload is invalid or processing failed
-    """
-    incident_id = f"wh_{int(datetime.utcnow().timestamp() * 1000)}"
-
-    source = x_webhook_source or "unknown"
-    if x_github_event:
-        source = "github"
-
-    client_ip = request.client.host if request.client else "unknown"
-
-    logger.info(
-        "webhook_received",
-        incident_id=incident_id,
-        source=source,
-        client_ip=client_ip,
-        event_type=x_github_event,
-        payload_size=len(str(payload)),
-        headers={
-            "x-webhook-source": x_webhook_source,
-            "x-github-event": x_github_event,
-            "x-signature": "***" if x_signature else None,
-        },
-    )
-
-    logger.debug(
-        "webhook_payload",
-        incident_id=incident_id,
-        source=source,
-        payload=payload
-    )
-
-    # Validate payload is not empty
-    if not payload:
-        logger.warning(
-            "webhook_empty_payload",
-            incident_id=incident_id,
-            source=source,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Payload cannot be empty",
-        )
+def _verify_github_signature(body: bytes, signature: str, secret: str) -> bool:
+    import hmac
+    import hashlib
     
-    # TODO: In production, features need to be added
-    # Signature verification
-    # Queue the event for async processing
-    # Rate limiting per source
-    # Deduplication
-    # Schema validation based on source
+    if not signature or not secret:
+        return False
+    
+    expected = hmac.new(
+        secret.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    
+    if signature.startswith("sha256="):
+        signature = signature[7:]
+    
+    return hmac.compare_digest(expected, signature)
 
-    logger.info(
-        "webhook_acknowledged",
-        incident_id=incident_id,
-        source=source,
-    )
 
-    return WebhookResponse(
-        incident_id=incident_id,
-        acknowledged=True,
-        queued=False,
-        message=f"Webhook received from {source}",
-    )
+def _is_github_failure_event(event_type: str, payload: Dict[str, Any]) -> bool:
+    if event_type == "workflow_run":
+        workflow_run = payload.get("workflow_run", {})
+        conclusion = workflow_run.get("conclusion")
+        status_value = workflow_run.get("status")
+        return status_value == "completed" and conclusion in ["failure", "timed_out", "action_required"]
+    
+    if event_type == "check_run":
+        conclusion = payload.get("check_run", {}).get("conclusion")
+        return conclusion in ["failure", "timed_out"]
+    
+    return False
+
+
+def _is_argocd_failure_event(payload: Dict[str, Any]) -> bool:
+    app_status = payload.get("application", {}).get("status", {})
+    sync_status = app_status.get("sync", {}).get("status", "").lower()
+    health_status = app_status.get("health", {}).get("status", "").lower()
+    
+    return sync_status in ["unknown", "outofsync"] or health_status in ["degraded", "missing", "unknown"]
+
+
+def _is_kubernetes_failure_event(payload: Dict[str, Any]) -> bool:
+    event_type = payload.get("type", "").lower()
+    reason = payload.get("reason", "").lower()
+    
+    failure_reasons = [
+        "backoff", "failed", "unhealthy", "evicted",
+        "oomkilled", "crashloopbackoff", "imagepullbackoff",
+        "error", "killing",
+    ]
+    
+    if event_type == "warning":
+        return True
+    
+    return any(r in reason for r in failure_reasons)
+
+
+def _extract_github_payload(payload: Dict[str, Any], event_type: str) -> Dict[str, Any]:
+    if event_type == "workflow_run":
+        workflow_run = payload.get("workflow_run", {})
+        repository = payload.get("repository", {})
+        
+        branch = workflow_run.get("head_branch", "")
+        if branch in ["main", "master", "production"]:
+            severity = "critical"
+        elif branch in ["staging", "develop"]:
+            severity = "high"
+        else:
+            severity = "medium"
+        
+        error_log = f"Workflow '{workflow_run.get('name')}' failed\n"
+        error_log += f"Conclusion: {workflow_run.get('conclusion')}\n"
+        error_log += f"Repository: {repository.get('full_name')}\n"
+        error_log += f"Branch: {branch}\n"
+        error_log += f"Commit: {workflow_run.get('head_sha', '')[:8]}\n"
+        error_log += f"URL: {workflow_run.get('html_url')}"
+        
+        return {
+            "severity": severity,
+            "error_log": error_log,
+            "error_message": f"Workflow failed: {workflow_run.get('conclusion')}",
+            "context": {
+                "repository": repository.get("full_name"),
+                "workflow": workflow_run.get("name"),
+                "workflow_id": workflow_run.get("workflow_id"),
+                "run_id": workflow_run.get("id"),
+                "run_number": workflow_run.get("run_number"),
+                "branch": branch,
+                "commit_sha": workflow_run.get("head_sha"),
+                "html_url": workflow_run.get("html_url"),
+            },
+        }
+    
+    return payload
+
+
+def _extract_argocd_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    app = payload.get("application", {})
+    metadata = app.get("metadata", {})
+    app_status = app.get("status", {})
+    
+    sync_status = app_status.get("sync", {}).get("status", "Unknown")
+    health_status = app_status.get("health", {}).get("status", "Unknown")
+    
+    error_log = f"ArgoCD Application '{metadata.get('name')}' unhealthy\n"
+    error_log += f"Sync Status: {sync_status}\n"
+    error_log += f"Health Status: {health_status}\n"
+    
+    conditions = app_status.get("conditions", [])
+    for condition in conditions:
+        error_log += f"Condition: {condition.get('type')} - {condition.get('message', '')}\n"
+    
+    return {
+        "severity": "high" if health_status.lower() == "degraded" else "medium",
+        "error_log": error_log,
+        "error_message": f"ArgoCD sync failed: {sync_status}",
+        "context": {
+            "application": metadata.get("name"),
+            "namespace": metadata.get("namespace"),
+            "sync_status": sync_status,
+            "health_status": health_status,
+            "revision": app_status.get("sync", {}).get("revision"),
+        },
+    }
+
+
+def _extract_kubernetes_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    involved_object = payload.get("involvedObject", payload.get("involved_object", {}))
+    
+    reason = payload.get("reason", "Unknown")
+    message = payload.get("message", "")
+    
+    if reason.lower() in ["oomkilled", "crashloopbackoff"]:
+        severity = "critical"
+    elif reason.lower() in ["backoff", "unhealthy", "failed"]:
+        severity = "high"
+    else:
+        severity = "medium"
+    
+    error_log = f"Kubernetes Event: {reason}\n"
+    error_log += f"Message: {message}\n"
+    error_log += f"Object: {involved_object.get('kind')}/{involved_object.get('name')}\n"
+    error_log += f"Namespace: {involved_object.get('namespace')}"
+    
+    return {
+        "severity": severity,
+        "error_log": error_log,
+        "error_message": message,
+        "context": {
+            "namespace": involved_object.get("namespace"),
+            "pod": involved_object.get("name") if involved_object.get("kind") == "Pod" else None,
+            "kind": involved_object.get("kind"),
+            "reason": reason,
+        },
+    }
+
 
 @router.post(
     "/webhook/github",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="GitHub webhook endpoint",
-    description="Dedicated endpoint for GitHub webhooks with signature verification",
     tags=["Webhook"],
 )
 async def receive_github_webhook(
     request: Request,
-    x_github_event: str | None = Header(None),
-    x_github_delivery: str | None = Header(None),
-    x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256"),
+    background_tasks: BackgroundTasks,
+    x_github_event: str = Header(...),
+    x_github_delivery: Optional[str] = Header(None),
+    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
     db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
-    """
-    Receive and process GitHub webhook events with HMAC-SHA256 signature verification.
     
-    Args:
-        request: FastAPI request object
-        x_github_event: GitHub event type (e.g., 'ping', 'workflow_run', 'push')
-        x_github_delivery: Unique delivery ID for this webhook
-        x_hub_signature_256: HMAC-SHA256 signature for verification
-        
-    Returns:
-        WebhookResponse with acknowledgement
-        
-    Raises:
-        HTTPException: If signature verification fails or payload is invalid
-    """
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
-    
-    # Get raw body for signature verification
     body = await request.body()
     
     logger.info(
@@ -154,240 +201,326 @@ async def receive_github_webhook(
         incident_id=incident_id,
         event_type=x_github_event,
         delivery_id=x_github_delivery,
-        has_signature=bool(x_hub_signature_256),
-        body_size=len(body),
     )
     
-    # Special handling for ping event
     if x_github_event == "ping":
-        logger.info(
-            "github_webhook_ping",
-            incident_id=incident_id,
-            delivery_id=x_github_delivery,
-        )
         return WebhookResponse(
             incident_id=incident_id,
             acknowledged=True,
             queued=False,
-            message="GitHub webhook ping received successfully"
+            message="GitHub webhook ping received",
         )
     
-    # Verify signature if webhook secret is configured
-    if settings.github_webhook_secret:
-        try:
-            webhook_client = GitHubWebhookClient(settings.github_webhook_secret)
-            
-            if not x_hub_signature_256:
-                logger.error(
-                    "github_webhook_missing_signature",
-                    incident_id=incident_id,
-                    event_type=x_github_event,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Missing X-Hub-Signature-256 header"
-                )
-            
-            is_valid = webhook_client.verify_signature(body, x_hub_signature_256)
-            
-            if not is_valid:
-                logger.error(
-                    "github_webhook_invalid_signature",
-                    incident_id=incident_id,
-                    event_type=x_github_event,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid webhook signature"
-                )
-            
-            logger.info(
-                "github_webhook_signature_verified",
-                incident_id=incident_id,
-                event_type=x_github_event,
-            )
-            
-        except WebhookSignatureError as e:
-            logger.error(
-                "github_webhook_signature_error",
-                incident_id=incident_id,
-                error=str(e),
-            )
+    if settings.GITHUB_WEBHOOK_SECRET:
+        if not _verify_github_signature(body, x_hub_signature_256, settings.GITHUB_WEBHOOK_SECRET):
+            logger.error("github_webhook_invalid_signature", incident_id=incident_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=str(e)
+                detail="Invalid webhook signature",
             )
-    else:
-        logger.warning(
-            "github_webhook_secret_not_configured",
-            incident_id=incident_id,
-            message="Webhook secret not configured - skipping signature verification"
-        )
     
-    # Parse payload
     try:
         import json
         payload = json.loads(body.decode('utf-8'))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.error(
-            "github_webhook_invalid_payload",
-            incident_id=incident_id,
-            error=str(e),
-        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid JSON payload: {e}"
+            detail=f"Invalid JSON payload: {e}",
         )
     
-    logger.debug(
-        "github_webhook_payload",
-        incident_id=incident_id,
-        event_type=x_github_event,
-        payload=payload,
+    if not _is_github_failure_event(x_github_event, payload):
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"Event {x_github_event} acknowledged (not a failure)",
+        )
+    
+    normalized_payload = _extract_github_payload(payload, x_github_event)
+    normalized_payload["raw_payload"] = payload
+    
+    background_tasks.add_task(
+        _process_webhook_async,
+        event_processor,
+        normalized_payload,
+        IncidentSource.GITHUB,
+        incident_id,
     )
-    
-    # Process workflow_run failures
-    if x_github_event == "workflow_run":
-        workflow_run = payload.get("workflow_run", {})
-        conclusion = workflow_run.get("conclusion")
-        status_value = workflow_run.get("status")
-        
-        # Check if it's a failure
-        if status_value == "completed" and conclusion in ["failure", "timed_out", "action_required"]:
-            logger.info(
-                "github_workflow_failure_detected",
-                incident_id=incident_id,
-                workflow_name=workflow_run.get("name"),
-                conclusion=conclusion,
-            )
-            
-            # Extract failure details
-            repository = payload.get("repository", {})
-            repo_name = repository.get("full_name", "unknown")
-            
-            # Create incident in database
-            try:
-                incident_repo = IncidentRepository(db)
-                
-                # Build context
-                context = {
-                    "repository": repo_name,
-                    "workflow_name": workflow_run.get("name"),
-                    "workflow_id": workflow_run.get("workflow_id"),
-                    "run_id": workflow_run.get("id"),
-                    "run_number": workflow_run.get("run_number"),
-                    "branch": workflow_run.get("head_branch"),
-                    "commit_sha": workflow_run.get("head_sha"),
-                    "commit_message": workflow_run.get("head_commit", {}).get("message"),
-                    "author": workflow_run.get("head_commit", {}).get("author", {}).get("name"),
-                    "html_url": workflow_run.get("html_url"),
-                    "started_at": workflow_run.get("run_started_at"),
-                    "completed_at": workflow_run.get("updated_at"),
-                }
-                
-                # Determine severity based on branch
-                branch = workflow_run.get("head_branch", "")
-                if branch in ["main", "master", "production"]:
-                    severity = Severity.CRITICAL
-                elif branch in ["staging", "develop"]:
-                    severity = Severity.HIGH
-                else:
-                    severity = Severity.MEDIUM
-                
-                # Build error log
-                error_log = f"Workflow '{workflow_run.get('name')}' failed with conclusion: {conclusion}\n"
-                error_log += f"Repository: {repo_name}\n"
-                error_log += f"Branch: {branch}\n"
-                error_log += f"Commit: {workflow_run.get('head_sha', '')[:8]}\n"
-                error_log += f"URL: {workflow_run.get('html_url')}\n"
-                
-                # Create incident
-                db_incident = incident_repo.create(
-                    incident_id=incident_id,
-                    timestamp=datetime.fromisoformat(workflow_run.get("run_started_at", datetime.utcnow().isoformat()).replace('Z', '+00:00')),
-                    source=IncidentSource.GITHUB.value,
-                    severity=severity.value,
-                    failure_type=FailureType.BUILD_FAILURE.value if "build" in workflow_run.get("name", "").lower() else FailureType.TEST_FAILURE.value,
-                    error_log=error_log,
-                    error_message=f"Workflow failed: {conclusion}",
-                    context=context,
-                    fixability=Fixability.UNKNOWN.value,
-                    raw_payload=payload,
-                    tags=[f"repo:{repo_name}", f"branch:{branch}", f"workflow:{workflow_run.get('name')}"]
-                )
-                
-                db.commit()
-                
-                logger.info(
-                    "incident_created",
-                    incident_id=incident_id,
-                    repository=repo_name,
-                    workflow=workflow_run.get("name"),
-                    severity=severity.value,
-                )
-                
-            except Exception as e:
-                logger.error(
-                    "incident_creation_failed",
-                    incident_id=incident_id,
-                    error=str(e),
-                    exc_info=True,
-                )
-                # Don't fail the webhook - just log the error
-                # db.rollback() will be handled by the dependency cleanup
-    
-    # TODO: Queue the event for async processing (analysis & remediation)
     
     logger.info(
-        "github_webhook_processed",
+        "github_webhook_queued",
         incident_id=incident_id,
         event_type=x_github_event,
-        delivery_id=x_github_delivery,
     )
-
+    
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
-        queued=False,
-        message=f"GitHub webhook received: {x_github_event}"
+        queued=True,
+        message=f"GitHub failure detected, processing started",
     )
+
+
+@router.post(
+    "/webhook/github/sync",
+    response_model=WebhookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="GitHub webhook endpoint (synchronous)",
+    tags=["Webhook"],
+)
+async def receive_github_webhook_sync(
+    request: Request,
+    x_github_event: str = Header(...),
+    x_github_delivery: Optional[str] = Header(None),
+    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+    db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
+) -> WebhookResponse:
+    
+    incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
+    body = await request.body()
+    
+    if x_github_event == "ping":
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message="GitHub webhook ping received",
+        )
+    
+    if settings.GITHUB_WEBHOOK_SECRET:
+        if not _verify_github_signature(body, x_hub_signature_256, settings.GITHUB_WEBHOOK_SECRET):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid webhook signature",
+            )
+    
+    try:
+        import json
+        payload = json.loads(body.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid JSON payload: {e}",
+        )
+    
+    if not _is_github_failure_event(x_github_event, payload):
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"Event {x_github_event} acknowledged (not a failure)",
+        )
+    
+    normalized_payload = _extract_github_payload(payload, x_github_event)
+    normalized_payload["raw_payload"] = payload
+    
+    result = await event_processor.process(
+        payload=normalized_payload,
+        source=IncidentSource.GITHUB,
+    )
+    
+    return WebhookResponse(
+        incident_id=result.incident_id,
+        acknowledged=True,
+        queued=False,
+        message=result.message,
+    )
+
 
 @router.post(
     "/webhook/argocd",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="ArgoCD webhook endpoint",
-    description="Dedicated enpoint for ArgoCD webhooks",
     tags=["Webhook"],
 )
 async def receive_argocd_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
+    
     incident_id = f"argo_{int(datetime.utcnow().timestamp() * 1000)}"
-
+    
     app_name = payload.get("application", {}).get("metadata", {}).get("name", "unknown")
-    sync_status = payload.get("application", {}).get("status", {}).get("sync", {}).get("status", "unknown")
-
+    
     logger.info(
         "argocd_webhook_received",
         incident_id=incident_id,
         application=app_name,
-        sync_status=sync_status,
     )
-
-    logger.debug(
-        "argocd_webhook_payload",
-        incident_id=incident_id,
-        payload=payload
+    
+    if not _is_argocd_failure_event(payload):
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"ArgoCD event acknowledged (not a failure)",
+        )
+    
+    normalized_payload = _extract_argocd_payload(payload)
+    normalized_payload["raw_payload"] = payload
+    
+    background_tasks.add_task(
+        _process_webhook_async,
+        event_processor,
+        normalized_payload,
+        IncidentSource.ARGOCD,
+        incident_id,
     )
-
+    
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
-        queued=False,
-        message=f"ArgoCD webhook received from {app_name}",
+        queued=True,
+        message=f"ArgoCD failure detected for {app_name}, processing started",
     )
+
+
+@router.post(
+    "/webhook/kubernetes",
+    response_model=WebhookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Kubernetes event webhook endpoint",
+    tags=["Webhook"],
+)
+async def receive_kubernetes_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
+) -> WebhookResponse:
+    
+    incident_id = f"k8s_{int(datetime.utcnow().timestamp() * 1000)}"
+    
+    reason = payload.get("reason", "Unknown")
+    
+    logger.info(
+        "kubernetes_webhook_received",
+        incident_id=incident_id,
+        reason=reason,
+    )
+    
+    if not _is_kubernetes_failure_event(payload):
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"Kubernetes event acknowledged (not a failure)",
+        )
+    
+    normalized_payload = _extract_kubernetes_payload(payload)
+    normalized_payload["raw_payload"] = payload
+    
+    background_tasks.add_task(
+        _process_webhook_async,
+        event_processor,
+        normalized_payload,
+        IncidentSource.KUBERNETES,
+        incident_id,
+    )
+    
+    return WebhookResponse(
+        incident_id=incident_id,
+        acknowledged=True,
+        queued=True,
+        message=f"Kubernetes failure detected ({reason}), processing started",
+    )
+
+
+@router.post(
+    "/webhook/generic",
+    response_model=WebhookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generic webhook endpoint",
+    tags=["Webhook"],
+)
+async def receive_generic_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    x_webhook_source: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
+) -> WebhookResponse:
+    
+    incident_id = f"gen_{int(datetime.utcnow().timestamp() * 1000)}"
+    
+    source_map = {
+        "github": IncidentSource.GITHUB,
+        "argocd": IncidentSource.ARGOCD,
+        "kubernetes": IncidentSource.KUBERNETES,
+        "k8s": IncidentSource.KUBERNETES,
+        "gitlab": IncidentSource.GITLAB,
+        "jenkins": IncidentSource.JENKINS,
+    }
+    
+    source = source_map.get((x_webhook_source or "").lower(), IncidentSource.MANUAL)
+    
+    logger.info(
+        "generic_webhook_received",
+        incident_id=incident_id,
+        source=source.value,
+    )
+    
+    if not payload.get("error_log") and not payload.get("message"):
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message="Webhook acknowledged (no error_log provided)",
+        )
+    
+    if not payload.get("error_log"):
+        payload["error_log"] = payload.get("message", str(payload))
+    
+    background_tasks.add_task(
+        _process_webhook_async,
+        event_processor,
+        payload,
+        source,
+        incident_id,
+    )
+    
+    return WebhookResponse(
+        incident_id=incident_id,
+        acknowledged=True,
+        queued=True,
+        message=f"Generic webhook received, processing started",
+    )
+
+
+async def _process_webhook_async(
+    event_processor: EventProcessor,
+    payload: Dict[str, Any],
+    source: IncidentSource,
+    incident_id: str,
+):
+    try:
+        result = await event_processor.process(
+            payload=payload,
+            source=source,
+        )
+        
+        logger.info(
+            "webhook_processing_complete",
+            incident_id=result.incident_id,
+            success=result.success,
+            outcome=result.outcome.value,
+        )
+        
+    except Exception as e:
+        logger.error(
+            "webhook_processing_failed",
+            incident_id=incident_id,
+            error=str(e),
+            exc_info=True,
+        )
+
 
 @router.get(
     "/webhook/health",
@@ -400,4 +533,10 @@ async def webhook_health() -> Dict[str, Any]:
         "status": "healthy",
         "endpoint": "webhook",
         "timestamp": datetime.utcnow().isoformat(),
+        "features": {
+            "github": True,
+            "argocd": True,
+            "kubernetes": True,
+            "generic": True,
+        },
     }
