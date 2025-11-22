@@ -3,12 +3,13 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Request, status, Header
+from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 import structlog
 
 from app.core.config import settings
@@ -21,9 +22,8 @@ from app.middleware import (
     RateLimitMiddleware,
     PerformanceMonitoringMiddleware,
 )
-from app.dependencies import get_engine
+from app.dependencies import get_engine, get_db, get_event_processor
 
-# Configure structured logging
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,
@@ -44,42 +44,28 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan handler.
-    
-    Handles startup and shutdown events.
-    """
-    # Startup
     logger.info(
         "application_startup",
         environment=settings.environment.value,
         version=settings.version,
-        database_url=settings.database_url.split("@")[-1],  # Hide credentials
+        database_url=settings.database_url.split("@")[-1],
     )
     
-    # Initialize database connection
     try:
         engine = get_engine()
         with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
             logger.info("database_connection_verified")
     except Exception as e:
         logger.error("database_connection_failed", error=str(e))
-        # Continue anyway - app can still serve health checks
-    
-    # TODO: Initialize cache connections (Redis)
-    # TODO: Pre-warm any connections
-    # TODO: Load initial configuration
     
     yield
     
-    # Shutdown
     logger.info("application_shutdown")
-    
-    # TODO: Close database connections
-    # TODO: Close cache connections
-    # TODO: Cleanup resources
+
 
 app = FastAPI(
     title="DevFlowFix",
@@ -91,17 +77,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-""" Middleware (!Order matters) """
-# 1. Request ID (should be first to ensure all logs have request ID)
 app.add_middleware(RequestIDMiddleware)
 
-# 2. Performance Monitoring
 app.add_middleware(
     PerformanceMonitoringMiddleware,
     slow_request_threshold_ms=1000,
 )
 
-# 3. CORS (before any request processing)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -111,13 +93,11 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "X-Response-Time"],
 )
 
-# 4. GZip Compression (compress responses > 1KB)
 app.add_middleware(
     GZipMiddleware,
     minimum_size=1000,
 )
 
-# 5. Request Logging
 app.add_middleware(
     RequestLoggingMiddleware,
     log_request_body=settings.log_level == "DEBUG",
@@ -125,7 +105,6 @@ app.add_middleware(
     exclude_paths=["/health", "/ready"],
 )
 
-# 6. Rate Limiting (before error handling)
 if settings.is_production:
     app.add_middleware(
         RateLimitMiddleware,
@@ -133,16 +112,11 @@ if settings.is_production:
         exclude_paths=["/health", "/ready"],
     )
 
-# 7. Error Handling (should be last to catch all errors)
 app.add_middleware(ErrorHandlingMiddleware)
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """
-    Handle Pydantic validation errors.
-    
-    Returns user-friendly validation error messages.
-    """
     request_id = getattr(request.state, "request_id", "unknown")
     
     logger.warning(
@@ -163,13 +137,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         },
     )
 
+
 @app.exception_handler(DevFlowFixException)
 async def devflowfix_exception_handler(request: Request, exc: DevFlowFixException):
-    """
-    Handle custom DevFlowFix exceptions.
-    
-    Already handled by ErrorHandlingMiddleware, but keeping for explicit handling.
-    """
     request_id = getattr(request.state, "request_id", "unknown")
     
     logger.warning(
@@ -180,7 +150,6 @@ async def devflowfix_exception_handler(request: Request, exc: DevFlowFixExceptio
         details=exc.details,
     )
     
-    # Determine status code
     from app.exceptions import (
         IncidentNotFoundError,
         RateLimitExceededError,
@@ -208,11 +177,6 @@ async def devflowfix_exception_handler(request: Request, exc: DevFlowFixExceptio
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """
-    Handle all other unhandled exceptions.
-    
-    Catches any exceptions not handled by specific handlers.
-    """
     request_id = getattr(request.state, "request_id", "unknown")
     
     logger.error(
@@ -223,7 +187,6 @@ async def general_exception_handler(request: Request, exc: Exception):
         exc_info=True,
     )
     
-    # Don't expose internal errors in production
     detail = str(exc) if not settings.is_production else "Internal server error"
     
     return JSONResponse(
@@ -236,20 +199,14 @@ async def general_exception_handler(request: Request, exc: Exception):
         },
     )
 
+
 @app.get(
     "/health",
     response_model=HealthResponse,
     tags=["Health"],
     summary="Health check",
-    description="Basic health check endpoint to verify service is running",
 )
 async def health_check():
-    """
-    Health check endpoint.
-    
-    Returns basic health status of the service.
-    Always returns 200 OK if the service is running.
-    """
     return HealthResponse(
         status="healthy",
         timestamp=datetime.utcnow(),
@@ -262,25 +219,12 @@ async def health_check():
     response_model=HealthResponse,
     tags=["Health"],
     summary="Readiness check",
-    description="Readiness check with external dependency verification",
 )
 async def readiness_check():
-    """
-    Readiness check endpoint.
-    
-    Checks if service is ready to handle requests by verifying:
-    - Database connection
-    - External API connectivity (optional)
-    - Cache availability (optional)
-    
-    Returns 200 if healthy, 503 if any critical component is down.
-    """
     health_status = "healthy"
     components = {}
     
-    # Check database connection
     try:
-        from app.dependencies import get_engine
         engine = get_engine()
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -290,27 +234,12 @@ async def readiness_check():
         components["database"] = "unhealthy"
         health_status = "degraded"
     
-    # Check NVIDIA API (optional - don't fail if not configured)
     if settings.nvidia_api_key:
-        try:
-            # TODO: Implement actual NVIDIA API health check
-            components["nvidia_api"] = "healthy"
-        except Exception as e:
-            logger.error("nvidia_api_health_check_failed", error=str(e))
-            components["nvidia_api"] = "unhealthy"
-            # Don't mark as degraded - this is optional
+        components["nvidia_api"] = "configured"
     
-    # Check Redis cache (optional)
     if settings.redis_url:
-        try:
-            # TODO: Implement Redis health check
-            components["cache"] = "healthy"
-        except Exception as e:
-            logger.error("cache_health_check_failed", error=str(e))
-            components["cache"] = "unhealthy"
-            # Cache is optional, so don't mark as degraded
+        components["cache"] = "configured"
     
-    # Return appropriate status code
     status_code = (
         status.HTTP_200_OK if health_status == "healthy" 
         else status.HTTP_503_SERVICE_UNAVAILABLE
@@ -331,14 +260,8 @@ async def readiness_check():
     "/",
     tags=["Root"],
     summary="Root endpoint",
-    description="API information and navigation",
 )
 async def root():
-    """
-    Root endpoint.
-    
-    Returns basic API information and navigation links.
-    """
     return {
         "name": "DevFlowFix API",
         "version": settings.version,
@@ -349,62 +272,108 @@ async def root():
             "redoc": "/redoc" if not settings.is_production else None,
             "health": "/health",
             "ready": "/ready",
+            "api": "/api/v1",
+        },
+        "endpoints": {
+            "webhooks": "/api/v1/webhook",
+            "analytics": "/api/v1/analytics",
+            "incidents": "/api/v1/incidents",
         },
     }
 
-# Import and register routers when ready
-# TODO: Implement routers
 
-# from app.api.v1.router import api_router
-# app.include_router(api_router, prefix="/api/v1", tags=["v1"])
+from app.api.v1.webhook import router as webhook_router
+from app.api.v1.analytics import router as analytics_router
 
-# Example router registration (uncomment when routers are ready):
-# from app.api.v1 import health, incidents, webhook, analytics, approvals
-from app.api.v1.webhook import router as webhook_router, receive_github_webhook
-
-# Register webhook router at /api/v1/webhook/*
 app.include_router(
     webhook_router,
     prefix="/api/v1",
-    tags=["Webhooks"]
+    tags=["Webhooks"],
 )
 
-# Also register GitHub webhook at root /webhooks/github for convenience
-# Direct route registration for the commonly expected path
+app.include_router(
+    analytics_router,
+    prefix="/api/v1",
+    tags=["Analytics"],
+)
+
+
 @app.post("/webhooks/github", tags=["Webhooks"])
-async def github_webhook_root(request: Request, x_github_event: str | None = Header(None), x_github_delivery: str | None = Header(None), x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256")):
-    """GitHub webhook endpoint at root level (redirects to main handler)."""
-    return await receive_github_webhook(request, x_github_event, x_github_delivery, x_hub_signature_256)
+async def github_webhook_root(
+    request: Request,
+    x_github_event: str = Header(...),
+    x_github_delivery: str = Header(None),
+    x_hub_signature_256: str = Header(None, alias="X-Hub-Signature-256"),
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.webhook import receive_github_webhook
+    event_processor = get_event_processor(db)
+    
+    from fastapi import BackgroundTasks
+    background_tasks = BackgroundTasks()
+    
+    return await receive_github_webhook(
+        request=request,
+        background_tasks=background_tasks,
+        x_github_event=x_github_event,
+        x_github_delivery=x_github_delivery,
+        x_hub_signature_256=x_hub_signature_256,
+        db=db,
+        event_processor=event_processor,
+    )
 
-logger.info("webhook_routers_registered", prefixes=["/api/v1/webhook", "/webhooks/github"])
-# 
-# app.include_router(
-#     health.router,
-#     prefix="/api/v1",
-#     tags=["Health"]
-# )
-# 
-# app.include_router(
-#     incidents.router,
-#     prefix="/api/v1",
-#     tags=["Incidents"]
-# )
-# 
-# app.include_router(
-#     webhook.router,
-#     prefix="/api/v1",
-#     tags=["Webhooks"]
-# )
-# 
-# app.include_router(
-#     analytics.router,
-#     prefix="/api/v1",
-#     tags=["Analytics"]
-# )
-# 
-# app.include_router(
-#     approvals.router,
-#     prefix="/api/v1",
-#     tags=["Approvals"]
-# )
 
+@app.post("/webhooks/argocd", tags=["Webhooks"])
+async def argocd_webhook_root(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.webhook import receive_argocd_webhook
+    
+    payload = await request.json()
+    event_processor = get_event_processor(db)
+    
+    from fastapi import BackgroundTasks
+    background_tasks = BackgroundTasks()
+    
+    return await receive_argocd_webhook(
+        request=request,
+        background_tasks=background_tasks,
+        payload=payload,
+        db=db,
+        event_processor=event_processor,
+    )
+
+
+@app.post("/webhooks/kubernetes", tags=["Webhooks"])
+async def kubernetes_webhook_root(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.webhook import receive_kubernetes_webhook
+    
+    payload = await request.json()
+    event_processor = get_event_processor(db)
+    
+    from fastapi import BackgroundTasks
+    background_tasks = BackgroundTasks()
+    
+    return await receive_kubernetes_webhook(
+        request=request,
+        background_tasks=background_tasks,
+        payload=payload,
+        db=db,
+        event_processor=event_processor,
+    )
+
+
+logger.info(
+    "routers_registered",
+    routers=[
+        "/api/v1/webhook",
+        "/api/v1/analytics",
+        "/webhooks/github",
+        "/webhooks/argocd",
+        "/webhooks/kubernetes",
+    ],
+)
