@@ -93,8 +93,7 @@ class ServiceContainer:
             if settings.nvidia_api_key:
                 from app.adapters.ai.nvidia.embeddings import EmbeddingAdapter
                 self._embedding_adapter = EmbeddingAdapter(
-                    api_key=settings.nvidia_api_key,
-                    base_url=getattr(settings, 'nvidia_base_url', None),
+                    model=settings.nvidia_embedding_model
                 )
             else:
                 logger.warning("nvidia_api_key_not_configured")
@@ -106,8 +105,7 @@ class ServiceContainer:
             if settings.nvidia_api_key:
                 from app.adapters.ai.nvidia.llm import LLMAdapter
                 self._llm_adapter = LLMAdapter(
-                    api_key=settings.nvidia_api_key,
-                    base_url=getattr(settings, 'nvidia_base_url', None),
+                    model=settings.nvidia_llm_model
                 )
             else:
                 logger.warning("nvidia_api_key_not_configured")
@@ -117,10 +115,9 @@ class ServiceContainer:
     def notification_service(self):
         if self._notification_service is None:
             if settings.slack_token:
-                from app.adapters.external.slack.notifications import SlackNotificationService
-                self._notification_service = SlackNotificationService(
-                    token=settings.slack_token,
-                    default_channel=getattr(settings, 'slack_default_channel', '#incidents'),
+                from app.adapters.external.slack.notifications import SlackNotificationAdapter
+                self._notification_service = SlackNotificationAdapter(
+                    settings=settings
                 )
             else:
                 logger.warning("slack_token_not_configured")
@@ -131,7 +128,10 @@ class ServiceContainer:
             if self.llm_adapter:
                 from app.services.analyzer import AnalyzerService
                 self._analyzer_service = AnalyzerService(
-                    llm_adapter=self.llm_adapter,
+                    settings=settings,
+                    llm_client=self.llm_adapter,
+                    embedder_service=self.embedding_adapter,
+                    retriever_service=self.get_retriever_service()
                 )
             else:
                 logger.warning("analyzer_service_not_available_no_llm")

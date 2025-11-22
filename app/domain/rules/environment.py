@@ -16,7 +16,12 @@ logger = structlog.get_logger(__name__)
 class EnvironmentRule(BaseRule):
     
     def __init__(self):
-        super().__init__("EnvironmentRule")
+        pass
+
+    @property
+    def name(self) -> str:
+        """ Get the rule name """
+        return "EnvironmentRule"
     
     def evaluate(
         self,

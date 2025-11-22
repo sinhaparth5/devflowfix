@@ -22,11 +22,15 @@ class TimeWindowRule(BaseRule):
         block_weekends: bool = False,
         block_business_hours: bool = False,
     ):
-        super().__init__("TimeWindowRule")
         self.allowed_start = allowed_start
         self.allowed_end = allowed_end
         self.block_weekends = block_weekends
         self.block_business_hours = block_business_hours
+
+    @property
+    def name(self) -> str:
+        """ Get the rule name. """
+        return "TimeWindowRule"
     
     def evaluate(
         self,

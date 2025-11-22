@@ -16,13 +16,13 @@ logger = structlog.get_logger(__name__)
 class RetrieverService:
     def __init__(
         self,
-        embedding_adapater: EmbeddingAdapter,
+        embedding_adapter: EmbeddingAdapter,
         vector_repository: Optional[VectorRepository] = None,
         default_top_k: int = 5,
         default_similarity_threshold: float = 0.7,
         cache_ttl_seconds: int = 300,
     ):
-        self.embedding_adapter = embedding_adapater
+        self.embedding_adapter = embedding_adapter
         self.vector_repo = vector_repository
         self.default_top_k = default_top_k
         self.default_similarity_threshold = default_similarity_threshold

@@ -12,7 +12,7 @@ from app.core.enums import Environment, LogLevel
 class DatabaseSettings(BaseSettings):
     """Database configuration."""
     
-    url: str = Field(default="postgresql://postgres:postgres@localhost:5432/devflowfix", alias="DATABASE_URL")
+    url: str = Field(default="test", alias="DATABASE_URL")
     pool_size: int = Field(default=5, alias="DB_POOL_SIZE")
     max_overflow: int = Field(default=10, alias="DB_MAX_OVERFLOW")
     pool_timeout: int = Field(default=30, alias="DB_POOL_TIMEOUT")
@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     
     # Database settings
     database_url: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/vector_db",
+        default="test",
         description="PostgreSQL database URL with credentials"
     )
     

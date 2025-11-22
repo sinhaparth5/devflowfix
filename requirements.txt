@@ -40,3 +40,5 @@ PyGithub
 # Observability
 aws-xray-sdk
 aws-embedded-metrics
+
+pytest

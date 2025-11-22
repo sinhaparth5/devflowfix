@@ -38,7 +38,7 @@ class DecisionService:
     def _initialize_rules(self) ->list[BaseRule]:
         return [
             BlacklistRule(),
-            BlastRadiusRule(max_radius=10),
+            BlastRadiusRule(),
             TimeWindowRule(),
             EnvironmentRule(),
             ConfidenceRule(),

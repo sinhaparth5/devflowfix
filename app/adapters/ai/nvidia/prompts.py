@@ -216,6 +216,14 @@ def build_root_cause_analysis_prompt(
     Returns:
         Formatted prompt string
     """
+    # Build stack trace section separately to avoid f-string backslash issues
+    stack_trace_section = ""
+    if stack_trace:
+        stack_trace_section = f"## Stack Trace\n```\n{stack_trace[:2000]}\n```\n"
+    
+    # Build context lines separately
+    context_lines = "\n".join([f"- {k}: {v}" for k, v in context.items() if v])
+    
     prompt = f"""Perform a detailed root cause analysis of the following incident.
 
 ## Error Log
@@ -223,10 +231,9 @@ def build_root_cause_analysis_prompt(
 {error_log[:3000]}
 ```
 
-{f"## Stack Trace\n```\n{stack_trace[:2000]}\n```\n" if stack_trace else ""}
-
+{stack_trace_section}
 ## Context
-{chr(10).join([f"- {k}: {v}" for k, v in context.items() if v])}
+{context_lines}
 
 ## Analysis Required
 
@@ -267,6 +274,9 @@ def build_remediation_validation_prompt(
     Returns:
         Formatted prompt string
     """
+    # Build context lines separately to avoid f-string backslash issues
+    context_lines = "\n".join([f"- {k}: {v}" for k, v in context.items() if v])
+    
     prompt = f"""Validate the proposed remediation action for this incident.
 
 ## Incident Classification
@@ -274,7 +284,7 @@ def build_remediation_validation_prompt(
 - Proposed Action: {proposed_action}
 
 ## Context
-{chr(10).join([f"- {k}: {v}" for k, v in context.items() if v])}
+{context_lines}
 
 ## Validation Required
 

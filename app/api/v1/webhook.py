@@ -211,8 +211,8 @@ async def receive_github_webhook(
             message="GitHub webhook ping received",
         )
     
-    if settings.GITHUB_WEBHOOK_SECRET:
-        if not _verify_github_signature(body, x_hub_signature_256, settings.GITHUB_WEBHOOK_SECRET):
+    if settings.github_webhook_secret:
+        if not _verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
             logger.error("github_webhook_invalid_signature", incident_id=incident_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -288,8 +288,8 @@ async def receive_github_webhook_sync(
             message="GitHub webhook ping received",
         )
     
-    if settings.GITHUB_WEBHOOK_SECRET:
-        if not _verify_github_signature(body, x_hub_signature_256, settings.GITHUB_WEBHOOK_SECRET):
+    if settings.github_webhook_secret:
+        if not _verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid webhook signature",
