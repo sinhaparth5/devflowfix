@@ -3,9 +3,148 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import Text, Index, desc
+from sqlmodel import SQLModel, Field, Column, JSON, Relationship
+from sqlalchemy import Text, Index, desc, ForeignKey
 from pgvector.sqlalchemy import Vector
+
+class UserTable(SQLModel, table=True):
+    """
+    User database table.
+    Stores user information for Zero Trust authentication.
+    """
+    __tablename__ = "users"
+    # Primary Key
+    user_id: str = Field(primary_key=True, max_length=50)
+
+    # Authentication
+    email: str = Field(unique=True, index=True, max_length=255)
+    hashed_password: str = Field(sa_column=Column(Text))
+
+    # Profile Information
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    avatar_url: Optional[str] = Field(default=None, max_length=500)
+
+    # Organization/Team
+    organization_id: Optional[str] = Field(default=None, max_length=50, index=True)
+    team_id: Optional[str] = Field(default=None, max_length=50, index=True)
+    role: str = Field(default="user", max_length=50, index=True)
+
+    # Zero Trust Fields
+    is_active: bool = Field(default=True, index=True)
+    is_verified: bool = Field(default=False)
+    is_mfa_enabled: bool = Field(default=False)
+    mfa_secret: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Session Management
+    last_login_at: Optional[datetime] = Field(default=None)
+    last_login_ip: Optional[str] = Field(default=None, max_length=45)
+    last_login_user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
+    failed_login_attempts: int = Field(default=0)
+    locked_until: Optional[datetime] = Field(default=None)
+       
+    # Token Management
+    refresh_token_hash: Optional[str] = Field(default=None, sa_column=Column(Text))
+    token_version: int = Field(default=0)
+
+    # API Keys for service accounts
+    api_key_hash: Optional[str] = Field(default=None, sa_column=Column(Text))
+    api_key_prefix: Optional[str] = Field(default=None, max_length=10)
+
+    # Audit
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = Field(default=None, max_length=50)
+
+    # Settings/Preferences (strored as JSON)
+    preferences: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Allowed resources (Zero Trust - explicit permissions)
+    allowed_repositories: list = Field(default_factory=list, sa_column=Column(JSON))
+    allowed_namespaces: list = Field(default_factory=list, sa_column=Column(JSON))
+    allowed_services: list = Field(default_factory=list, sa_column=Column(JSON))
+
+    __table_args__ = (
+        Index('idx_users_email_active', 'email', 'is_active'),
+        Index('idx_users_org_team', 'organization_id', 'team_id'),
+        Index('idx_users_role', 'role'),
+    )
+
+class UserSessionTable(SQLModel, table=True):
+    """
+    User session table for Zero Trust session management.
+    Each session is tracked individually for security
+    """
+    __tablename__ = "user_sessions"
+
+    # Primary Key
+    session_id: str = Field(primary_key=True, max_length=50)
+
+    # Foregin Key to User
+    user_id: str = Field(foreign_key="users.user_id", index=True, max_length=50)
+
+    # Session Details
+    refresh_token_hash: str = Field(sa_column=Column(Text))
+    device_fingerprint: Optional[str] = Field(default=None, max_length=255)
+    ip_address: Optional[str] = Field(default=None, max_length=45)
+    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Location (for anomaly detection)
+    country: Optional[str] = Field(default=None, max_length=2)
+    city: Optional[str] = Field(default=None, max_length=100)
+    
+    # Session state
+    is_active: bool = Field(default=True, index=True)
+    is_revoked: bool = Field(default=False)
+    revoked_reason: Optional[str] = Field(default=None, max_length=255)
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    last_used_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime = Field(index=True)
+
+    __table_args__ = (
+        Index('idx_sessions_user_active', 'user_id', 'is_active'),
+        Index('idx_sessions_expires', 'expires_at'),
+    )
+
+class AuditLogTable(SQLModel, table=True):
+    """
+    Audit log table for Zero Trust compliance.
+    Tracks all security-relevant actions
+    """
+    __tablename__ = "audit_logs"
+
+    # Primary Key
+    log_id: str = Field(primary_key=True, max_length=50)
+
+    # Who
+    user_id: Optional[str] = Field(default=None, foreign_key="users.user_id", index=True, max_length=50)
+    session_id: Optional[str] = Field(default=None, max_length=50)
+
+    # What
+    action: str = Field(max_length=100, index=True)
+    resource_type: Optional[str] = Field(default=None, max_length=50)
+    resource_id: Optional[str] = Field(default=None, max_length=50)
+
+    # Details
+    details: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Where
+    ip_address: Optional[str] = Field(default=None, max_length=45)
+    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Result
+    success: bool = Field(default=True, index=True)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # When
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index('idx_audit_user_action', 'user_id', 'action'),
+        Index('idx_audit_resource', 'resource_type', 'resource_id'),
+        Index('idx_audit_created_desc', desc('created_at')),
+    )
 
 class IncidentTable(SQLModel, table=True):
     """
@@ -17,6 +156,14 @@ class IncidentTable(SQLModel, table=True):
     
     # Primary Key
     incident_id: str = Field(primary_key=True, max_length=50)
+
+    # Foreign Key to User (owner)
+    user_id: Optional[str] = Field(
+        default=None,
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
 
     # Timestamps 
     timestamp: datetime = Field(index=True)
@@ -84,6 +231,8 @@ class IncidentTable(SQLModel, table=True):
               postgresql_with={'lists': 100},
               postgresql_ops={'embedding': 'vector_cosine_ops'}
               ),
+        Index('idx_incidents_user_id', 'user_id'),
+        Index('idx_incidents_user_created', 'user_id', 'created_at'),
     )
 
 class FeedbackTable(SQLModel, table=True):
@@ -99,6 +248,9 @@ class FeedbackTable(SQLModel, table=True):
 
     # Foreign Key to Incident
     incident_id: str = Field(foreign_key="incidents.incident_id", index=True, max_length=50)
+
+    # Foreign Key to User
+    user_id: Optional[str] = Field(default=None, foreign_key="users.user_id", index=True, max_length=50)
     
     # Feedback
     helpful: bool = Field(index=True)

@@ -4,6 +4,9 @@ from .models import (
     RemediationHistoryTable,
     MetricTable,
     ConfigTable,
+    UserSessionTable,
+    UserTable,
+    AuditLogTable
 )
 
 from .connection import (
@@ -24,6 +27,9 @@ from .repositories import (
 )
 
 __all__ = [
+    "UserSessionTable",
+    "UserTable",
+    "AuditLogTable",
     "IncidentTable",
     "FeedbackTable",
     "RemediationHistoryTable",

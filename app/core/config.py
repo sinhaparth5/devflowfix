@@ -5,6 +5,7 @@ from typing import Optional, Any, List
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+import secrets
 
 from app.core.enums import Environment, LogLevel
 
@@ -202,6 +203,15 @@ class Settings(BaseSettings):
     app_name: str = Field(default="DevFlowFix", alias="APP_NAME")
     app_version: str = Field(default="1.0.0", alias="APP_VERSION")
     version: str = Field(default="0.1.0", description="Application version")
+
+    # Security / JWT
+    secret_key: str = Field(
+        default_factory=lambda: secrets.token_urlsafe(32),
+        description="Secret key for JWT signing. MUST be set in production!"
+    )
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15  # Short-lived for Zero Trust
+    refresh_token_expire_days: int = 7
     
     log_level: LogLevel = Field(
         default=LogLevel.INFO,
@@ -214,6 +224,12 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
     api_workers: int = Field(default=4, alias="API_WORKERS")
+
+    max_failed_login_attempts: int = 5
+    account_lockout_duration_minutes: int = 30
+    max_active_sessions_per_user: int = 10
+    session_idle_timeout_minutes: int = 60
+    require_email_verification: bool = False  # Set True in production
     
     # Database settings
     database_url: str = Field(

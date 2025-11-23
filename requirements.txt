@@ -27,10 +27,15 @@ boto3
 # Utilities
 python-dotenv
 python-jose[cryptography]
-passlib[bcrypt]
+bcrypt
 tenacity
 pybreaker
 structlog
+pyotp
+python-multipart
+python-json-logger
+python-dateutil
+pydantic[email]
 
 # External Integrations
 slack-sdk

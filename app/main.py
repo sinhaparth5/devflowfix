@@ -275,6 +275,7 @@ async def root():
             "api": "/api/v1",
         },
         "endpoints": {
+            "auth": "/api/v1/auth",
             "webhooks": "/api/v1/webhook",
             "analytics": "/api/v1/analytics",
             "incidents": "/api/v1/incidents",
@@ -284,6 +285,20 @@ async def root():
 
 from app.api.v1.webhook import router as webhook_router
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.incidents import router as incidents_router
+
+app.include_router(
+    auth_router,
+    prefix="/api/v1",
+    tags=["Authentication"],
+)
+
+app.include_router(
+    incidents_router,
+    prefix="/api/v1",
+    tags=["Incidents"],
+)
 
 app.include_router(
     webhook_router,
@@ -296,7 +311,6 @@ app.include_router(
     prefix="/api/v1",
     tags=["Analytics"],
 )
-
 
 @app.post("/webhooks/github", tags=["Webhooks"])
 async def github_webhook_root(
@@ -370,6 +384,8 @@ async def kubernetes_webhook_root(
 logger.info(
     "routers_registered",
     routers=[
+        "/api/v1/auth",
+        "/api/v1/incidents"
         "/api/v1/webhook",
         "/api/v1/analytics",
         "/webhooks/github",

@@ -1,394 +1,428 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-"""Repository for incident CRUD operations."""
-
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select, update, and_, or_, func
+from sqlalchemy import select, and_, or_, func, desc
+import structlog
 
 from app.adapters.database.postgres.models import IncidentTable
+from app.exceptions import DatabaseError
+
+logger = structlog.get_logger()
 
 
 class IncidentRepository:
-    """Repository for managing incident database operations."""
-    
-    def __init__(self, session: Session):
-        """
-        Initialize the repository with a database session.
-        
-        Args:
-            session: SQLAlchemy database session
-        """
-        self.session = session
-    
-    def create(
-        self,
-        incident_id: str,
-        timestamp: datetime,
-        source: str,
-        severity: str,
-        error_log: str,
-        failure_type: Optional[str] = None,
-        error_message: Optional[str] = None,
-        stack_trace: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        root_cause: Optional[str] = None,
-        fixability: Optional[str] = None,
-        confidence: Optional[float] = None,
-        embedding: Optional[list] = None,
-        similar_incidents: Optional[list] = None,
-        remediation_plan: Optional[Dict[str, Any]] = None,
-        raw_payload: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None,
-    ) -> IncidentTable:
-        """
-        Create a new incident in the database.
-        
-        Args:
-            incident_id: Unique identifier for the incident
-            timestamp: When the incident occurred
-            source: Source of the incident (e.g., 'github', 'jenkins', 'kubernetes')
-            severity: Severity level (e.g., 'critical', 'high', 'medium', 'low')
-            error_log: The error log text
-            failure_type: Type of failure (optional)
-            error_message: Extracted error message (optional)
-            stack_trace: Stack trace if available (optional)
-            context: Additional context as JSON (optional)
-            root_cause: Identified root cause (optional)
-            fixability: Fixability assessment (optional)
-            confidence: Confidence score (optional)
-            embedding: Vector embedding for RAG (optional)
-            similar_incidents: List of similar incidents (optional)
-            remediation_plan: Remediation plan details (optional)
-            raw_payload: Raw event payload (optional)
-            tags: List of tags (optional)
-            
-        Returns:
-            Created IncidentTable object
-        """
-        incident = IncidentTable(
-            incident_id=incident_id,
-            timestamp=timestamp,
-            source=source,
-            severity=severity,
-            error_log=error_log,
-            failure_type=failure_type,
-            error_message=error_message,
-            stack_trace=stack_trace,
-            context=context or {},
-            root_cause=root_cause,
-            fixability=fixability,
-            confidence=confidence,
-            embedding=embedding,
-            similar_incidents=similar_incidents,
-            remediation_plan=remediation_plan,
-            raw_payload=raw_payload or {},
-            tags=tags or [],
-        )
-        
-        self.session.add(incident)
-        self.session.commit()
-        self.session.refresh(incident)
-        
-        return incident
-    
+    """Repository for incident database operations."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create(self, incident: IncidentTable) -> IncidentTable:
+        """Create a new incident."""
+        try:
+            self.db.add(incident)
+            self.db.commit()
+            self.db.refresh(incident)
+            logger.info("incident_created", incident_id=incident.incident_id)
+            return incident
+        except Exception as e:
+            self.db.rollback()
+            logger.error("incident_creation_failed", error=str(e))
+            raise DatabaseError("create", str(e))
+
     def get_by_id(self, incident_id: str) -> Optional[IncidentTable]:
-        """
-        Retrieve an incident by its ID.
-        
-        Args:
-            incident_id: The unique identifier of the incident
-            
-        Returns:
-            IncidentTable object if found, None otherwise
-        """
-        stmt = select(IncidentTable).where(IncidentTable.incident_id == incident_id)
-        result = self.session.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    def list_incidents(
-        self,
-        outcome: Optional[str] = None,
-        severity: Optional[str] = None,
-        source: Optional[str] = None,
-        failure_type: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[IncidentTable]:
-        """
-        List incidents with optional filtering.
-        
-        Args:
-            outcome: Filter by outcome (e.g., 'success', 'failed', 'pending')
-            severity: Filter by severity level
-            source: Filter by source
-            failure_type: Filter by failure type
-            limit: Maximum number of results to return (default: 100)
-            offset: Number of results to skip (default: 0)
-            
-        Returns:
-            List of IncidentTable objects
-        """
-        stmt = select(IncidentTable)
-        
-        # Apply filters
-        conditions = []
-        if outcome:
-            conditions.append(IncidentTable.outcome == outcome)
-        if severity:
-            conditions.append(IncidentTable.severity == severity)
-        if source:
-            conditions.append(IncidentTable.source == source)
-        if failure_type:
-            conditions.append(IncidentTable.failure_type == failure_type)
-        
-        if conditions:
-            stmt = stmt.where(and_(*conditions))
-        
-        # Order by created_at descending (newest first)
-        stmt = stmt.order_by(IncidentTable.created_at.desc())
-        
-        # Apply pagination
-        stmt = stmt.limit(limit).offset(offset)
-        
-        result = self.session.execute(stmt)
-        return list(result.scalars().all())
-    
-    def update(
-        self,
-        incident_id: str,
-        failure_type: Optional[str] = None,
-        error_message: Optional[str] = None,
-        severity: Optional[str] = None,
-        root_cause: Optional[str] = None,
-        fixability: Optional[str] = None,
-        confidence: Optional[float] = None,
-        embedding: Optional[list] = None,
-        similar_incidents: Optional[list] = None,
-        remediation_plan: Optional[Dict[str, Any]] = None,
-        remediation_executed: Optional[bool] = None,
-        remediation_start_time: Optional[datetime] = None,
-        remediation_end_time: Optional[datetime] = None,
-        outcome: Optional[str] = None,
-        outcome_message: Optional[str] = None,
-        resolution_time_seconds: Optional[int] = None,
-        resolved_at: Optional[datetime] = None,
-        human_feedback: Optional[Dict[str, Any]] = None,
-        approved_by: Optional[str] = None,
-        approval_timestamp: Optional[datetime] = None,
-        tags: Optional[List[str]] = None,
-    ) -> Optional[IncidentTable]:
-        """
-        Update an existing incident.
-        
-        Args:
-            incident_id: The unique identifier of the incident to update
-            failure_type: New failure type
-            error_message: New error message
-            severity: New severity level
-            root_cause: Identified root cause
-            fixability: Fixability assessment
-            confidence: Confidence score
-            embedding: Vector embedding
-            similar_incidents: List of similar incidents
-            remediation_plan: Remediation plan details
-            remediation_executed: Whether remediation was executed
-            remediation_start_time: When remediation started
-            remediation_end_time: When remediation ended
-            outcome: Final outcome
-            outcome_message: Outcome message
-            resolution_time_seconds: Time to resolve
-            resolved_at: When incident was resolved
-            human_feedback: Human feedback data
-            approved_by: Who approved the remediation
-            approval_timestamp: When it was approved
-            tags: List of tags
-            
-        Returns:
-            Updated IncidentTable object if found, None otherwise
-        """
-        # First, get the incident
-        incident = self.get_by_id(incident_id)
-        if not incident:
-            return None
-        
-        # Update fields if provided
-        if failure_type is not None:
-            incident.failure_type = failure_type
-        if error_message is not None:
-            incident.error_message = error_message
-        if severity is not None:
-            incident.severity = severity
-        if root_cause is not None:
-            incident.root_cause = root_cause
-        if fixability is not None:
-            incident.fixability = fixability
-        if confidence is not None:
-            incident.confidence = confidence
-        if embedding is not None:
-            incident.embedding = embedding
-        if similar_incidents is not None:
-            incident.similar_incidents = similar_incidents
-        if remediation_plan is not None:
-            incident.remediation_plan = remediation_plan
-        if remediation_executed is not None:
-            incident.remediation_executed = remediation_executed
-        if remediation_start_time is not None:
-            incident.remediation_start_time = remediation_start_time
-        if remediation_end_time is not None:
-            incident.remediation_end_time = remediation_end_time
-        if outcome is not None:
-            incident.outcome = outcome
-        if outcome_message is not None:
-            incident.outcome_message = outcome_message
-        if resolution_time_seconds is not None:
-            incident.resolution_time_seconds = resolution_time_seconds
-        if resolved_at is not None:
-            incident.resolved_at = resolved_at
-        if human_feedback is not None:
-            incident.human_feedback = human_feedback
-        if approved_by is not None:
-            incident.approved_by = approved_by
-        if approval_timestamp is not None:
-            incident.approval_timestamp = approval_timestamp
-        if tags is not None:
-            incident.tags = tags
-        
-        # Update the updated_at timestamp
-        incident.updated_at = datetime.utcnow()
-        
-        self.session.commit()
-        self.session.refresh(incident)
-        
-        return incident
-    
+        """Get incident by ID."""
+        return self.db.query(IncidentTable).filter(
+            IncidentTable.incident_id == incident_id
+        ).first()
+
+    def update(self, incident: IncidentTable) -> IncidentTable:
+        """Update an existing incident."""
+        try:
+            incident.updated_at = datetime.utcnow()
+            self.db.commit()
+            self.db.refresh(incident)
+            return incident
+        except Exception as e:
+            self.db.rollback()
+            logger.error("incident_update_failed", incident_id=incident.incident_id, error=str(e))
+            raise DatabaseError("update", str(e))
+
     def delete(self, incident_id: str) -> bool:
-        """
-        Delete an incident by ID.
-        
-        Args:
-            incident_id: The unique identifier of the incident to delete
-            
-        Returns:
-            True if deleted, False if not found
-        """
+        """Delete an incident."""
         incident = self.get_by_id(incident_id)
-        if not incident:
-            return False
-        
-        self.session.delete(incident)
-        self.session.commit()
-        
-        return True
-    
-    def count_by_outcome(self, outcome: str) -> int:
-        """
-        Count incidents by outcome.
-        
-        Args:
-            outcome: Outcome to filter by
-            
-        Returns:
-            Count of incidents with the given outcome
-        """
-        stmt = select(func.count()).select_from(IncidentTable).where(IncidentTable.outcome == outcome)
-        result = self.session.execute(stmt)
-        return result.scalar_one()
-    
-    def get_recent_incidents(self, days: int = 7, limit: int = 50) -> List[IncidentTable]:
-        """
-        Get recent incidents from the last N days.
-        
-        Args:
-            days: Number of days to look back (default: 7)
-            limit: Maximum number of results (default: 50)
-            
-        Returns:
-            List of recent IncidentTable objects
-        """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
-        
-        stmt = (
-            select(IncidentTable)
-            .where(IncidentTable.created_at >= cutoff_date)
-            .order_by(IncidentTable.created_at.desc())
-            .limit(limit)
-        )
-        
-        result = self.session.execute(stmt)
-        return list(result.scalars().all())
-    
-    def get_unresolved_incidents(self, limit: int = 100) -> List[IncidentTable]:
-        """
-        Get all unresolved incidents (outcome is null or pending).
-        
-        Args:
-            limit: Maximum number of results (default: 100)
-            
-        Returns:
-            List of unresolved IncidentTable objects
-        """
-        stmt = (
-            select(IncidentTable)
-            .where(or_(IncidentTable.outcome == None, IncidentTable.outcome == 'pending'))
-            .order_by(IncidentTable.created_at.desc())
-            .limit(limit)
-        )
-        
-        result = self.session.execute(stmt)
-        return list(result.scalars().all())
-    
-    def search_by_similarity(
+        if incident:
+            self.db.delete(incident)
+            self.db.commit()
+            return True
+        return False
+
+    # User-scoped queries
+
+    def list_by_user(
         self,
-        embedding: list,
-        limit: int = 10,
-        min_confidence: Optional[float] = None,
-    ) -> List[IncidentTable]:
+        user_id: str,
+        skip: int = 0,
+        limit: int = 100,
+        filters: Optional[dict] = None,
+    ) -> tuple[list[IncidentTable], int]:
         """
-        Search for similar incidents using vector similarity.
+        List incidents for a specific user.
+        
+        Args:
+            user_id: User ID to filter by
+            skip: Number of records to skip
+            limit: Maximum records to return
+            filters: Optional filters dict
+            
+        Returns:
+            Tuple of (incidents, total_count)
+        """
+        query = self.db.query(IncidentTable).filter(IncidentTable.user_id == user_id)
+        query = self._apply_filters(query, filters or {})
+
+        total = query.count()
+        incidents = query.order_by(desc(IncidentTable.created_at)).offset(skip).limit(limit).all()
+
+        return incidents, total
+
+    def get_user_stats(
+        self,
+        user_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict:
+        """
+        Get incident statistics for a specific user.
+        
+        Args:
+            user_id: User ID
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            Statistics dictionary
+        """
+        query = self.db.query(IncidentTable).filter(IncidentTable.user_id == user_id)
+
+        if start_date:
+            query = query.filter(IncidentTable.created_at >= start_date)
+        if end_date:
+            query = query.filter(IncidentTable.created_at <= end_date)
+
+        return self._compute_stats(query)
+
+    def assign_to_user(self, incident_id: str, user_id: str) -> bool:
+        """Assign an incident to a user."""
+        incident = self.get_by_id(incident_id)
+        if incident:
+            incident.user_id = user_id
+            incident.updated_at = datetime.utcnow()
+            self.db.commit()
+            logger.info("incident_assigned", incident_id=incident_id, user_id=user_id)
+            return True
+        return False
+
+    # Admin/global queries
+
+    def list_all(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        filters: Optional[dict] = None,
+    ) -> tuple[list[IncidentTable], int]:
+        """
+        List all incidents (admin use).
+        
+        Args:
+            skip: Number of records to skip
+            limit: Maximum records to return
+            filters: Optional filters dict
+            
+        Returns:
+            Tuple of (incidents, total_count)
+        """
+        query = self.db.query(IncidentTable)
+        query = self._apply_filters(query, filters or {})
+
+        total = query.count()
+        incidents = query.order_by(desc(IncidentTable.created_at)).offset(skip).limit(limit).all()
+
+        return incidents, total
+
+    def get_global_stats(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict:
+        """
+        Get global incident statistics.
+        
+        Args:
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            Statistics dictionary
+        """
+        query = self.db.query(IncidentTable)
+
+        if start_date:
+            query = query.filter(IncidentTable.created_at >= start_date)
+        if end_date:
+            query = query.filter(IncidentTable.created_at <= end_date)
+
+        return self._compute_stats(query)
+
+    # Helper methods
+
+    def _apply_filters(self, query, filters: dict):
+        """Apply filters to query."""
+        if filters.get("user_id"):
+            query = query.filter(IncidentTable.user_id == filters["user_id"])
+        if filters.get("source"):
+            query = query.filter(IncidentTable.source == filters["source"])
+        if filters.get("severity"):
+            query = query.filter(IncidentTable.severity == filters["severity"])
+        if filters.get("outcome"):
+            query = query.filter(IncidentTable.outcome == filters["outcome"])
+        if filters.get("failure_type"):
+            query = query.filter(IncidentTable.failure_type == filters["failure_type"])
+        if filters.get("start_date"):
+            query = query.filter(IncidentTable.created_at >= filters["start_date"])
+        if filters.get("end_date"):
+            query = query.filter(IncidentTable.created_at <= filters["end_date"])
+        if filters.get("search"):
+            search_term = f"%{filters['search']}%"
+            query = query.filter(
+                or_(
+                    IncidentTable.error_log.ilike(search_term),
+                    IncidentTable.error_message.ilike(search_term),
+                    IncidentTable.root_cause.ilike(search_term),
+                )
+            )
+        if filters.get("min_confidence"):
+            query = query.filter(IncidentTable.confidence >= filters["min_confidence"])
+        if filters.get("max_confidence"):
+            query = query.filter(IncidentTable.confidence <= filters["max_confidence"])
+        if filters.get("repository"):
+            query = query.filter(
+                IncidentTable.context["repository"].astext == filters["repository"]
+            )
+        if filters.get("namespace"):
+            query = query.filter(
+                IncidentTable.context["namespace"].astext == filters["namespace"]
+            )
+        if filters.get("service"):
+            query = query.filter(
+                IncidentTable.context["service"].astext == filters["service"]
+            )
+
+        return query
+
+    def _compute_stats(self, query) -> dict:
+        """Compute statistics from a query."""
+        total = query.count()
+
+        # Count by outcome
+        resolved = query.filter(IncidentTable.outcome == "success").count()
+        pending = query.filter(
+            or_(IncidentTable.outcome == "pending", IncidentTable.outcome == None)
+        ).count()
+        failed = query.filter(IncidentTable.outcome == "failed").count()
+        escalated = query.filter(IncidentTable.outcome == "escalated").count()
+
+        # Success rate
+        success_rate = (resolved / total * 100) if total > 0 else 0.0
+
+        # Average resolution time
+        resolved_incidents = query.filter(
+            and_(
+                IncidentTable.outcome == "success",
+                IncidentTable.resolution_time_seconds != None
+            )
+        ).all()
+
+        avg_resolution_time = None
+        if resolved_incidents:
+            total_time = sum(inc.resolution_time_seconds for inc in resolved_incidents)
+            avg_resolution_time = total_time / len(resolved_incidents)
+
+        # By source
+        by_source = {}
+        for row in self.db.query(
+            IncidentTable.source,
+            func.count(IncidentTable.incident_id)
+        ).group_by(IncidentTable.source).all():
+            by_source[row[0]] = row[1]
+
+        # By severity
+        by_severity = {}
+        for row in self.db.query(
+            IncidentTable.severity,
+            func.count(IncidentTable.incident_id)
+        ).group_by(IncidentTable.severity).all():
+            by_severity[row[0]] = row[1]
+
+        # By failure type
+        by_failure_type = {}
+        for row in self.db.query(
+            IncidentTable.failure_type,
+            func.count(IncidentTable.incident_id)
+        ).filter(IncidentTable.failure_type != None).group_by(IncidentTable.failure_type).all():
+            by_failure_type[row[0]] = row[1]
+
+        return {
+            "total_incidents": total,
+            "resolved_incidents": resolved,
+            "pending_incidents": pending,
+            "failed_incidents": failed,
+            "escalated_incidents": escalated,
+            "success_rate": round(success_rate, 2),
+            "average_resolution_time_seconds": avg_resolution_time,
+            "incidents_by_source": by_source,
+            "incidents_by_severity": by_severity,
+            "incidents_by_failure_type": by_failure_type,
+        }
+
+    # Vector/similarity queries
+
+    def get_similar_incidents(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        min_similarity: float = 0.7,
+        exclude_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> list[tuple[IncidentTable, float]]:
+        """
+        Find similar incidents using vector similarity.
         
         Args:
             embedding: Query embedding vector
-            limit: Maximum number of results (default: 10)
-            min_confidence: Minimum confidence threshold (optional)
+            limit: Maximum results
+            min_similarity: Minimum cosine similarity threshold
+            exclude_id: Incident ID to exclude from results
+            user_id: Optional user ID to scope results
             
         Returns:
-            List of similar IncidentTable objects
+            List of (incident, similarity_score) tuples
         """
-        stmt = select(IncidentTable).where(IncidentTable.embedding != None)
-        
-        if min_confidence is not None:
-            stmt = stmt.where(IncidentTable.confidence >= min_confidence)
-        
-        # Order by vector similarity (cosine distance)
-        # Note: This requires pgvector extension
-        stmt = stmt.order_by(IncidentTable.embedding.cosine_distance(embedding))
-        stmt = stmt.limit(limit)
-        
-        result = self.session.execute(stmt)
-        return list(result.scalars().all())
-    
-    def get_incidents_by_tags(self, tags: List[str], limit: int = 100) -> List[IncidentTable]:
-        """
-        Get incidents that have any of the specified tags.
-        
-        Args:
-            tags: List of tags to search for
-            limit: Maximum number of results (default: 100)
-            
-        Returns:
-            List of IncidentTable objects with matching tags
-        """
-        # JSON contains operator for PostgreSQL
-        stmt = select(IncidentTable)
-        
-        # Check if any of the provided tags exist in the tags array
-        conditions = [IncidentTable.tags.contains([tag]) for tag in tags]
-        stmt = stmt.where(or_(*conditions))
-        
-        stmt = stmt.order_by(IncidentTable.created_at.desc()).limit(limit)
-        
-        result = self.session.execute(stmt)
-        return list(result.scalars().all())
+        from pgvector.sqlalchemy import Vector
+
+        # Build base query
+        query = self.db.query(
+            IncidentTable,
+            IncidentTable.embedding.cosine_distance(embedding).label("distance")
+        ).filter(
+            IncidentTable.embedding != None,
+            IncidentTable.outcome == "success",  # Only resolved incidents
+        )
+
+        if exclude_id:
+            query = query.filter(IncidentTable.incident_id != exclude_id)
+
+        if user_id:
+            query = query.filter(IncidentTable.user_id == user_id)
+
+        # Order by similarity (lower distance = higher similarity)
+        query = query.order_by("distance").limit(limit * 2)  # Get extra for filtering
+
+        results = query.all()
+
+        # Convert distance to similarity and filter
+        similar = []
+        for incident, distance in results:
+            similarity = 1 - distance
+            if similarity >= min_similarity:
+                similar.append((incident, similarity))
+            if len(similar) >= limit:
+                break
+
+        return similar
+
+    def update_embedding(self, incident_id: str, embedding: list[float]) -> bool:
+        """Update incident embedding."""
+        incident = self.get_by_id(incident_id)
+        if incident:
+            incident.embedding = embedding
+            incident.updated_at = datetime.utcnow()
+            self.db.commit()
+            return True
+        return False
+
+    # Recent incidents
+
+    def get_recent(
+        self,
+        limit: int = 10,
+        user_id: Optional[str] = None,
+    ) -> list[IncidentTable]:
+        """Get recent incidents."""
+        query = self.db.query(IncidentTable)
+
+        if user_id:
+            query = query.filter(IncidentTable.user_id == user_id)
+
+        return query.order_by(desc(IncidentTable.created_at)).limit(limit).all()
+
+    def get_pending(
+        self,
+        user_id: Optional[str] = None,
+    ) -> list[IncidentTable]:
+        """Get pending incidents awaiting remediation."""
+        query = self.db.query(IncidentTable).filter(
+            or_(
+                IncidentTable.outcome == "pending",
+                IncidentTable.outcome == None
+            )
+        )
+
+        if user_id:
+            query = query.filter(IncidentTable.user_id == user_id)
+
+        return query.order_by(IncidentTable.created_at).all()
+
+    # Bulk operations
+
+    def bulk_assign_to_user(
+        self,
+        incident_ids: list[str],
+        user_id: str,
+    ) -> int:
+        """Bulk assign incidents to a user."""
+        result = self.db.query(IncidentTable).filter(
+            IncidentTable.incident_id.in_(incident_ids)
+        ).update(
+            {
+                "user_id": user_id,
+                "updated_at": datetime.utcnow(),
+            },
+            synchronize_session=False
+        )
+        self.db.commit()
+        return result
+
+    def bulk_update_outcome(
+        self,
+        incident_ids: list[str],
+        outcome: str,
+        outcome_message: Optional[str] = None,
+    ) -> int:
+        """Bulk update incident outcomes."""
+        update_data = {
+            "outcome": outcome,
+            "updated_at": datetime.utcnow(),
+        }
+        if outcome_message:
+            update_data["outcome_message"] = outcome_message
+        if outcome == "success":
+            update_data["resolved_at"] = datetime.utcnow()
+
+        result = self.db.query(IncidentTable).filter(
+            IncidentTable.incident_id.in_(incident_ids)
+        ).update(update_data, synchronize_session=False)
+        self.db.commit()
+        return result
