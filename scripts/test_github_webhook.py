@@ -13,6 +13,8 @@ This script helps you verify that:
 
 import sys
 import json
+import hmac
+import hashlib
 from pathlib import Path
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
@@ -184,8 +186,29 @@ def search_github_incidents(engine):
 def display_test_instructions():
     """Display instructions for testing with real GitHub events."""
     print("\n" + "="*60)
-    print("How to Test with Real GitHub Workflow Failure")
+    print("How to Test with Real GitHub Webhook Failure")
     print("="*60 + "\n")
+    
+    # Show signature generation example
+    print("Webhook Signature Generation")
+    print("-" * 60)
+    print("When sending webhooks, GitHub signs them with HMAC-SHA256:")
+    print()
+    print("Example signature generation:")
+    secret = settings.github_webhook_secret or "your_webhook_secret"
+    payload_example = '{"action": "completed", "workflow_run": {...}}'
+    signature = hmac.new(
+        secret.encode(),
+        payload_example.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    print(f"  Secret: {secret[:20]}... (truncated)")
+    print(f"  Payload: {payload_example[:50]}...")
+    print(f"  Signature (sha256=): {signature}")
+    print()
+    print("This signature is sent in the X-Hub-Signature-256 header")
+    print("Format: X-Hub-Signature-256: sha256={signature}")
+    print()
     
     print("Option 1: Trigger a failure in existing workflow")
     print("-" * 60)
@@ -226,6 +249,7 @@ jobs:
     
     print("Then:")
     print("  • Check your application logs for 'incident_created' message")
+    print("  • Look for 'github_signature_verification' logs showing signatures")
     print("  • Run this script again to see the incident in database")
     print("  • Or query: SELECT * FROM incidents ORDER BY created_at DESC LIMIT 5;")
     print()

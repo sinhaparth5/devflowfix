@@ -233,7 +233,7 @@ class Settings(BaseSettings):
     
     # Database settings
     database_url: str = Field(
-        default="test",
+        default="postgresql://postgres:0ldx6qzkrlghdjnpx80zaohbh7uyna6a@shinkansen.proxy.rlwy.net:54874/railway",
         description="PostgreSQL database URL with credentials"
     )
     

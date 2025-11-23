@@ -79,6 +79,7 @@ class AnalyzerService:
     async def analyze(
         self,
         incident: Incident,
+        similar_incidents: Optional[List] = None,
         force_reanalysis: bool = False,
     ) -> AnalysisResult:
         """
@@ -219,7 +220,7 @@ class AnalyzerService:
                 }
             )
             
-            embedding = await self.embedder.generate_embedding(text)
+            embedding = await self.embedder.embed(text, input_type="passage")
             
             logger.debug(
                 f"Generated embedding with dimension {len(embedding)}",
@@ -259,14 +260,13 @@ class AnalyzerService:
             return []
         
         try:
-            similar = await self.retriever.search_similar_incidents(
-                embedding=embedding,
+            # Note: retrieve_similar_incidents uses incident object, not embedding
+            # We need to pass the incident itself, not the embedding
+            similar = await self.retriever.retrieve_similar_incidents(
+                incident=incident,
                 top_k=self.rag_top_k,
                 similarity_threshold=self.rag_similarity_threshold,
-                exclude_incident_id=incident.incident_id,
-                filters={
-                    "source": incident.source.value, 
-                },
+                source_filter=incident.source,
             )
             
             logger.info(
@@ -393,14 +393,16 @@ Be concise, accurate, and consider the similar incidents when available.
             return self._get_fallback_llm_response()
         
         try:
-            response = await self.llm.generate(
+            # LLMAdapter doesn't have generate(), use complete() instead
+            response = await self.llm.client.complete(
                 prompt=prompt,
-                model=self.llm_model,
-                temperature=self.llm_temperature,
                 max_tokens=self.llm_max_tokens,
+                temperature=self.llm_temperature,
             )
             
-            return response
+            # Extract text from response
+            text = self.llm.client.extract_text(response)
+            return text
             
         except Exception as e:
             logger.error(f"LLM call failed: {e}", exc_info=True)

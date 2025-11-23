@@ -55,6 +55,12 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except HTTPException:
+        # Re-raise HTTP exceptions without logging as database errors
+        # These are business logic errors, not database errors
+        db.close()
+        raise
     except Exception as e:
         logger.error("database_session_error", error=str(e))
         db.rollback()

@@ -23,6 +23,7 @@ from app.services.remediator import RemediatorService
 from app.services.retriever import RetrieverService
 from app.adapters.database.postgres.repositories.incident import IncidentRepository
 from app.adapters.database.postgres.repositories.vector import VectorRepository
+from app.adapters.database.postgres.models import IncidentTable
 from app.adapters.external.slack.notifications import SlackNotificationAdapter
 from app.adapters.ai.nvidia import EmbeddingAdapter
 
@@ -244,7 +245,23 @@ class EventProcessor:
             timestamp=datetime.utcnow(),
         )
         
-        await self.incident_repo.create(incident)
+        # Convert domain model to database model
+        incident_table = IncidentTable(
+            incident_id=incident.incident_id,
+            timestamp=incident.timestamp,
+            created_at=incident.created_at,
+            updated_at=incident.updated_at,
+            source=incident.source.value,
+            severity=incident.severity.value,
+            failure_type=incident.failure_type.value if incident.failure_type else None,
+            error_log=incident.error_log,
+            error_message=incident.error_message,
+            stack_trace=incident.stack_trace,
+            context=incident.context,
+            raw_payload=incident.raw_payload,
+        )
+        
+        self.incident_repo.create(incident_table)
         
         logger.info(
             "incident_created",
@@ -322,7 +339,7 @@ class EventProcessor:
         
         analysis = await self.analyzer.analyze(
             incident=incident,
-            similar_incidents=similar_incidents,
+            similar_incidents=similar_incidents if similar_incidents else [],
         )
         
         logger.info(
@@ -340,16 +357,19 @@ class EventProcessor:
         incident: Incident,
         analysis: AnalysisResult,
     ):
-        incident.failure_type = analysis.category
-        incident.root_cause = analysis.root_cause
-        incident.fixability = analysis.fixability
-        incident.confidence = analysis.confidence
-        incident.similar_incidents = [
-            {"id": s.get("incident_id"), "similarity": s.get("similarity")}
-            for s in analysis.similar_incidents[:5]
-        ]
-        
-        await self.incident_repo.update(incident)
+        # Fetch the database model
+        incident_table = self.incident_repo.get_by_id(incident.incident_id)
+        if incident_table:
+            incident_table.failure_type = analysis.category.value if analysis.category else None
+            incident_table.root_cause = analysis.root_cause
+            incident_table.fixability = analysis.fixability.value if analysis.fixability else None
+            incident_table.confidence = analysis.confidence
+            incident_table.similar_incidents = [
+                {"id": s.get("incident_id"), "similarity": s.get("similarity")}
+                for s in analysis.similar_incidents[:5]
+            ]
+            
+            self.incident_repo.update(incident_table)
     
     async def _decide(
         self,
@@ -359,7 +379,7 @@ class EventProcessor:
         similar_incidents: list,
     ) -> DecisionResult:
         
-        decision = self.decision_service.decide(
+        decision = await self.decision_service.decide(
             analysis=analysis,
             incident=incident,
             context=context,
@@ -524,7 +544,15 @@ class EventProcessor:
     
     async def _handle_failure(self, incident: Incident, error: str):
         incident.mark_resolved(Outcome.FAILED, error)
-        await self.incident_repo.update(incident)
+        
+        # Fetch and update the database model
+        incident_table = self.incident_repo.get_by_id(incident.incident_id)
+        if incident_table:
+            incident_table.outcome = Outcome.FAILED.value
+            incident_table.outcome_message = error
+            incident_table.resolved_at = incident.resolved_at
+            incident_table.resolution_time_seconds = incident.resolution_time_seconds
+            self.incident_repo.update(incident_table)
         
         if self.enable_notifications and self.notification_service:
             await self._notify(
@@ -543,7 +571,7 @@ class EventProcessor:
             return
         
         try:
-            await self.notification_service.send(
+            await self.notification_service.notify_incident(
                 notification_type=notification_type,
                 incident=incident,
                 **kwargs,
