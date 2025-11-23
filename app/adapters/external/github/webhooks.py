@@ -96,9 +96,17 @@ class GitHubWebhookClient:
         is_valid = hmac.compare_digest(github_signature, expected_signature)
         
         if not is_valid:
-            logger.warning("Webhook signature verification failed")
+            logger.warning(
+                "Webhook signature verification failed",
+                received_signature=github_signature[:16] + "...",
+                expected_signature=expected_signature[:16] + "...",
+                payload_size=len(payload_body),
+            )
         else:
-            logger.debug("Webhook signature verified successfully")
+            logger.info(
+                "Webhook signature verified successfully",
+                signature_prefix=expected_signature[:16] + "...",
+            )
         
         return is_valid
     

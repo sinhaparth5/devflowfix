@@ -63,7 +63,7 @@ class AnalysisResult:
     
     def add_warning(self, warning: str) -> None:
         """ Add a warning to the analysis """
-        if warning not in self.warning:
+        if warning not in self.warnings:
             self.warnings.append(warning)
 
     def to_dict(self) -> dict:

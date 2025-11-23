@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-from uuid import uuid5
+from uuid import uuid4
 
 from app.core.enums import (
     IncidentSource,
@@ -22,7 +22,7 @@ class Incident:
     This is a domain model, not a database model. It contains business logic
     and is independent of infrastructure concerns.
     """
-    incident_id: str = field(default_factory=lambda: f"inc_{uuid5().hex[:12]}")
+    incident_id: str = field(default_factory=lambda: f"inc_{uuid4().hex[:12]}")
 
     timestamp: datetime = field(default_factory=datetime.utcnow)
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -100,8 +100,8 @@ class Incident:
         else:
             end_time = datetime.utcnow()
 
-        duration = int(end_time - self.timestamp).total_seconds()
-        return max(0, duration)
+        duration = (end_time - self.timestamp).total_seconds()
+        return max(0, int(duration))
     
     def calculate_remediation_duration(self) -> Optional[int]:
         """

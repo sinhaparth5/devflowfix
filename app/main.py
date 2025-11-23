@@ -3,6 +3,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -315,26 +316,43 @@ app.include_router(
 @app.post("/webhooks/github", tags=["Webhooks"])
 async def github_webhook_root(
     request: Request,
-    x_github_event: str = Header(...),
-    x_github_delivery: str = Header(None),
-    x_hub_signature_256: str = Header(None, alias="X-Hub-Signature-256"),
-    db: Session = Depends(get_db),
+    x_github_event: Optional[str] = Header(None, alias="X-GitHub-Event"),
+    x_github_delivery: Optional[str] = Header(None, alias="X-GitHub-Delivery"),
 ):
-    from app.api.v1.webhook import receive_github_webhook
-    event_processor = get_event_processor(db)
+    """
+    Root GitHub webhook endpoint.
     
+    This endpoint delegates to the v1 webhook handler with proper dependency injection.
+    Signature verification happens before database session creation.
+    """
+    from app.api.v1.webhook import receive_github_webhook, verify_github_webhook_signature
+    from app.dependencies import get_db, get_event_processor
     from fastapi import BackgroundTasks
-    background_tasks = BackgroundTasks()
     
-    return await receive_github_webhook(
-        request=request,
-        background_tasks=background_tasks,
-        x_github_event=x_github_event,
-        x_github_delivery=x_github_delivery,
-        x_hub_signature_256=x_hub_signature_256,
-        db=db,
-        event_processor=event_processor,
-    )
+    # Ensure headers are strings
+    event_type = str(x_github_event) if x_github_event else "unknown"
+    delivery_id = str(x_github_delivery) if x_github_delivery else None
+    
+    # Verify signature first (before DB session)
+    body = await verify_github_webhook_signature(request)
+    
+    # Now create DB session and event processor
+    db = next(get_db())
+    try:
+        event_processor = get_event_processor(db)
+        background_tasks = BackgroundTasks()
+        
+        return await receive_github_webhook(
+            request=request,
+            background_tasks=background_tasks,
+            x_github_event=event_type,
+            x_github_delivery=delivery_id,
+            body=body,
+            db=db,
+            event_processor=event_processor,
+        )
+    finally:
+        db.close()
 
 
 @app.post("/webhooks/argocd", tags=["Webhooks"])

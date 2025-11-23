@@ -19,11 +19,52 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+async def verify_github_webhook_signature(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+) -> bytes:
+    """
+    Verify GitHub webhook signature before processing.
+    This dependency runs before database session creation to avoid false database errors.
+    
+    Returns the request body if signature is valid.
+    Raises HTTPException if signature is invalid.
+    """
+    body = await request.body()
+    
+    # Convert header to string if needed
+    signature_header = str(x_hub_signature_256) if x_hub_signature_256 else None
+    
+    if settings.github_webhook_secret:
+        if not _verify_github_signature(body, signature_header, settings.github_webhook_secret):
+            logger.error(
+                "github_webhook_invalid_signature",
+                has_signature=bool(signature_header),
+                signature_prefix=signature_header[:20] if signature_header else None,
+                body_length=len(body),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid webhook signature",
+            )
+    
+    return body
+
+
 def _verify_github_signature(body: bytes, signature: str, secret: str) -> bool:
     import hmac
     import hashlib
     
+    # Convert signature to string if it's not already
+    if signature is not None:
+        signature = str(signature)
+    
     if not signature or not secret:
+        logger.warning(
+            "github_signature_verification_missing_data",
+            has_signature=bool(signature),
+            has_secret=bool(secret),
+        )
         return False
     
     expected = hmac.new(
@@ -32,10 +73,18 @@ def _verify_github_signature(body: bytes, signature: str, secret: str) -> bool:
         hashlib.sha256,
     ).hexdigest()
     
+    received_signature = signature
     if signature.startswith("sha256="):
-        signature = signature[7:]
+        received_signature = signature[7:]
     
-    return hmac.compare_digest(expected, signature)
+    logger.info(
+        "github_signature_verification",
+        received_signature=received_signature[:16] + "...",
+        expected_signature=expected[:16] + "...",
+        signature_match=hmac.compare_digest(expected, received_signature),
+    )
+    
+    return hmac.compare_digest(expected, received_signature)
 
 
 def _is_github_failure_event(event_type: str, payload: Dict[str, Any]) -> bool:
@@ -188,13 +237,18 @@ async def receive_github_webhook(
     background_tasks: BackgroundTasks,
     x_github_event: str = Header(...),
     x_github_delivery: Optional[str] = Header(None),
-    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+    body: bytes = Depends(verify_github_webhook_signature),
     db: Session = Depends(get_db),
     event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
+    """
+    Receive and process GitHub webhook events.
+    
+    Signature verification happens via the verify_github_webhook_signature dependency
+    BEFORE the database session is created, preventing false database_session_error logs.
+    """
     
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
-    body = await request.body()
     
     logger.info(
         "github_webhook_received",
@@ -210,14 +264,6 @@ async def receive_github_webhook(
             queued=False,
             message="GitHub webhook ping received",
         )
-    
-    if settings.github_webhook_secret:
-        if not _verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
-            logger.error("github_webhook_invalid_signature", incident_id=incident_id)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid webhook signature",
-            )
     
     try:
         import json
@@ -272,13 +318,17 @@ async def receive_github_webhook_sync(
     request: Request,
     x_github_event: str = Header(...),
     x_github_delivery: Optional[str] = Header(None),
-    x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+    body: bytes = Depends(verify_github_webhook_signature),
     db: Session = Depends(get_db),
     event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
+    """
+    Receive and process GitHub webhook events synchronously.
+    
+    Signature verification happens via dependency before database session creation.
+    """
     
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
-    body = await request.body()
     
     if x_github_event == "ping":
         return WebhookResponse(
@@ -287,13 +337,6 @@ async def receive_github_webhook_sync(
             queued=False,
             message="GitHub webhook ping received",
         )
-    
-    if settings.github_webhook_secret:
-        if not _verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid webhook signature",
-            )
     
     try:
         import json
@@ -522,6 +565,151 @@ async def _process_webhook_async(
         )
 
 
+@router.post(
+    "/webhook/generate-signature",
+    status_code=status.HTTP_200_OK,
+    summary="Generate GitHub webhook signature",
+    description="Generate HMAC-SHA256 signature for webhook payload validation and testing",
+    tags=["Webhook"],
+)
+async def generate_webhook_signature(
+    request: Request,
+) -> Dict[str, Any]:
+    """
+    Generate a GitHub webhook signature for the provided payload.
+    
+    This endpoint helps you:
+    - Test webhook integration locally
+    - Verify signature generation is working correctly
+    - Debug signature validation issues
+    
+    The signature is computed using HMAC-SHA256 with your configured webhook secret.
+    
+    Example usage:
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/webhook/generate-signature \\
+      -H "Content-Type: application/json" \\
+      -d '{"action": "completed", "workflow_run": {...}}'
+    ```
+    
+    Returns:
+    - payload_hash: SHA256 hash of the payload
+    - signature: HMAC-SHA256 signature (without sha256= prefix)
+    - full_header: Complete X-Hub-Signature-256 header value
+    - payload_size: Size of the payload in bytes
+    """
+    import hmac
+    import hashlib
+    
+    body = await request.body()
+    
+    if not settings.github_webhook_secret:
+        logger.warning("generate_signature_no_secret_configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub webhook secret not configured. Set GITHUB_WEBHOOK_SECRET environment variable.",
+        )
+    
+    # Compute signature
+    signature = hmac.new(
+        settings.github_webhook_secret.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    
+    # Compute payload hash for reference
+    payload_hash = hashlib.sha256(body).hexdigest()
+    
+    logger.info(
+        "webhook_signature_generated",
+        payload_size=len(body),
+        signature_prefix=signature[:16] + "...",
+    )
+    
+    return {
+        "success": True,
+        "payload_hash": payload_hash,
+        "signature": signature,
+        "full_header": f"sha256={signature}",
+        "payload_size": len(body),
+        "secret_configured": True,
+        "usage": {
+            "header_name": "X-Hub-Signature-256",
+            "header_value": f"sha256={signature}",
+            "example": f'curl -H "X-Hub-Signature-256: sha256={signature}" ...',
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@router.get(
+    "/webhook/signature-info",
+    status_code=status.HTTP_200_OK,
+    summary="Get webhook signature configuration info",
+    description="Get information about webhook signature configuration and how to generate signatures",
+    tags=["Webhook"],
+)
+async def get_signature_info() -> Dict[str, Any]:
+    """
+    Get information about webhook signature configuration.
+    
+    Returns details about:
+    - Whether webhook secret is configured
+    - How to generate signatures
+    - Example payload and signature generation
+    """
+    import hmac
+    import hashlib
+    import json
+    
+    has_secret = bool(settings.github_webhook_secret)
+    
+    # Example payload
+    example_payload = {
+        "action": "completed",
+        "workflow_run": {
+            "id": 123456,
+            "name": "CI",
+            "conclusion": "failure",
+            "head_branch": "main",
+        }
+    }
+    
+    example_payload_json = json.dumps(example_payload, separators=(',', ':'))
+    example_signature = None
+    
+    if has_secret:
+        example_signature = hmac.new(
+            settings.github_webhook_secret.encode(),
+            example_payload_json.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+    
+    return {
+        "secret_configured": has_secret,
+        "secret_length": len(settings.github_webhook_secret) if has_secret else 0,
+        "algorithm": "HMAC-SHA256",
+        "header_name": "X-Hub-Signature-256",
+        "header_format": "sha256=<signature>",
+        "example": {
+            "payload": example_payload,
+            "payload_json": example_payload_json,
+            "signature": example_signature if has_secret else "SECRET_NOT_CONFIGURED",
+            "full_header": f"sha256={example_signature}" if has_secret else "sha256=SECRET_NOT_CONFIGURED",
+        },
+        "endpoints": {
+            "generate": "/api/v1/webhook/generate-signature (POST with JSON body)",
+            "verify": "/api/v1/webhook/github (POST with X-Hub-Signature-256 header)",
+        },
+        "usage_instructions": {
+            "step_1": "POST your JSON payload to /api/v1/webhook/generate-signature",
+            "step_2": "Copy the 'full_header' value from the response",
+            "step_3": "Use it as X-Hub-Signature-256 header when calling /api/v1/webhook/github",
+            "step_4": "Check logs for 'github_signature_verification' to see validation details",
+        },
+    }
+
+
 @router.get(
     "/webhook/health",
     status_code=status.HTTP_200_OK,
@@ -538,5 +726,6 @@ async def webhook_health() -> Dict[str, Any]:
             "argocd": True,
             "kubernetes": True,
             "generic": True,
+            "signature_generator": True,
         },
     }

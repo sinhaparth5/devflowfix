@@ -44,7 +44,7 @@ class DecisionService:
             ConfidenceRule(),
         ]
     
-    def decide(
+    async def decide(
             self,
             analysis: AnalysisResult,
             incident: Incident,
@@ -59,7 +59,7 @@ class DecisionService:
         )
 
         if self.enable_rules:
-            rule_result = self._apply_rules(incident, context, analysis)
+            rule_result = await self._apply_rules(incident, context, analysis)
             if not rule_result["allowed"]:
                 logger.info(
                     "decision_blocked_by_rule",
@@ -123,18 +123,22 @@ class DecisionService:
 
         return decision
     
-    def _apply_rules(
+    async def _apply_rules(
             self,
             incident: Incident,
             context: ExecutionContext,
             analysis: AnalysisResult,
     ) -> dict:
         for rule in self.rules:
-            if not rule.evaluate(incident, context, analysis):
+            # BlacklistRule.evaluate() expects (incident, plan) not (incident, context, analysis)
+            # Need to create a remediation plan first or pass None
+            # For now, pass None since we're in decision phase before creating the plan
+            result = await rule.evaluate(incident, plan=None)
+            if not result.passed:
                 return {
                     "allowed": False,
                     "blocked_by": rule.name,
-                    "reason": rule.get_failure_reason(),
+                    "reason": result.message,
                     "escalate": getattr(rule, "escalate_on_failure", False),
                 }
         
