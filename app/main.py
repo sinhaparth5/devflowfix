@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import structlog
@@ -77,6 +78,35 @@ app = FastAPI(
     openapi_url="/openapi.json" if not settings.is_production else None,
     lifespan=lifespan,
 )
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="DevFlowFix API",
+        version=settings.version,
+        description="Autonomous AI agent for CI/CD failure detection, analysis, and remediation",
+        routes=app.routes,
+    )
+    
+    openapi_schema["components"]["securitySchemes"] = {
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Enter your JWT token from /api/v1/auth/login"
+        }
+    }
+    
+    openapi_schema["security"] = [{"HTTPBearer": []}]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 app.add_middleware(RequestIDMiddleware)
 
@@ -321,22 +351,16 @@ async def github_webhook_root(
 ):
     """
     Root GitHub webhook endpoint.
-    
-    This endpoint delegates to the v1 webhook handler with proper dependency injection.
-    Signature verification happens before database session creation.
     """
     from app.api.v1.webhook import receive_github_webhook, verify_github_webhook_signature
     from app.dependencies import get_db, get_event_processor
     from fastapi import BackgroundTasks
     
-    # Ensure headers are strings
     event_type = str(x_github_event) if x_github_event else "unknown"
     delivery_id = str(x_github_delivery) if x_github_delivery else None
     
-    # Verify signature first (before DB session)
     body = await verify_github_webhook_signature(request)
     
-    # Now create DB session and event processor
     db = next(get_db())
     try:
         event_processor = get_event_processor(db)
