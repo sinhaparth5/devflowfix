@@ -714,7 +714,7 @@ async def generate_my_webhook_secret(
         secret_length=len(new_secret),
     )
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
@@ -822,7 +822,7 @@ async def create_webhook_secret(
         secret_length=len(new_secret),
     )
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user_id}"
     
     return {
@@ -871,7 +871,7 @@ async def get_my_webhook_info(
         else:
             secret_preview = "****"
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
@@ -939,7 +939,7 @@ async def get_webhook_secret_info(
         else:
             secret_preview = "****"
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user_id}"
     
     return {
@@ -995,7 +995,7 @@ async def test_my_webhook_signature(
         signature_prefix=signature[:16] + "...",
     )
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
@@ -1079,7 +1079,7 @@ async def test_webhook_signature(
         signature_prefix=signature[:16] + "...",
     )
     
-    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
+    base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
     webhook_url = f"{base_url}/api/v1/webhook/github/{user_id}"
     
     return {
