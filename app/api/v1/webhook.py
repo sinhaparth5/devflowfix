@@ -4,7 +4,6 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Header, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import structlog
 import secrets
@@ -14,10 +13,18 @@ import hashlib
 
 from app.core.schemas.webhook import WebhookPayload, WebhookResponse
 from app.core.config import settings
-from app.core.enums import IncidentSource, Severity, FailureType
+from app.core.enums import IncidentSource
 from app.services.event_processor import EventProcessor
 from app.dependencies import get_db, get_event_processor
-from app.adapters.database.postgres.models import UserTable
+
+try:
+    from app.api.v1.auth import get_current_active_user
+except ImportError:
+    async def get_current_active_user() -> dict:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Authentication module not available"
+        )
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -28,10 +35,7 @@ def generate_webhook_secret() -> str:
     Generate a cryptographically secure random webhook secret.
     
     Returns:
-        str: URL-safe base64-encoded 256-bit random string (43 characters)
-        
-    Time Complexity: O(1)
-    Space Complexity: O(1)
+        URL-safe base64-encoded 256-bit random string
     """
     random_bytes = secrets.token_bytes(32)
     secret = base64.urlsafe_b64encode(random_bytes).decode('utf-8').rstrip('=')
@@ -41,17 +45,6 @@ def generate_webhook_secret() -> str:
 def verify_github_signature(body: bytes, signature_header: str, secret: str) -> bool:
     """
     Verify GitHub webhook HMAC-SHA256 signature.
-    
-    Args:
-        body: Raw request body bytes
-        signature_header: X-Hub-Signature-256 header value
-        secret: User's webhook secret
-        
-    Returns:
-        bool: True if signature is valid, False otherwise
-        
-    Time Complexity: O(1) - Single HMAC computation + constant-time comparison
-    Space Complexity: O(1)
     """
     if not signature_header or not secret:
         logger.warning(
@@ -90,27 +83,7 @@ async def verify_github_webhook_signature(
     db: Session = Depends(get_db),
 ) -> bytes:
     """
-    Path-based webhook authentication with O(1) user lookup.
-    
-    Authentication Flow:
-    1. Extract user_id from URL path (/webhook/github/{user_id})
-    2. Single database query: SELECT secret WHERE user_id = {user_id}
-    3. Verify signature with retrieved secret
-    
-    Args:
-        user_id: User identifier from URL path
-        request: FastAPI request object
-        x_hub_signature_256: GitHub webhook signature header
-        db: Database session
-        
-    Returns:
-        bytes: Request body if authentication successful
-        
-    Raises:
-        HTTPException: 404 if user not found, 400 if secret not configured, 401 if signature invalid
-        
-    Time Complexity: O(1) - Single indexed database query + single HMAC verification
-    Space Complexity: O(1)
+    Path-based webhook authentication with user lookup.
     """
     body = await request.body()
     
@@ -185,9 +158,6 @@ async def verify_github_webhook_signature(
 def is_github_failure_event(event_type: str, payload: Dict[str, Any]) -> bool:
     """
     Determine if GitHub webhook event represents a failure.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     if event_type == "workflow_run":
         workflow_run = payload.get("workflow_run", {})
@@ -205,9 +175,6 @@ def is_github_failure_event(event_type: str, payload: Dict[str, Any]) -> bool:
 def is_argocd_failure_event(payload: Dict[str, Any]) -> bool:
     """
     Determine if ArgoCD webhook event represents a failure.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     app_status = payload.get("application", {}).get("status", {})
     sync_status = app_status.get("sync", {}).get("status", "").lower()
@@ -219,9 +186,6 @@ def is_argocd_failure_event(payload: Dict[str, Any]) -> bool:
 def is_kubernetes_failure_event(payload: Dict[str, Any]) -> bool:
     """
     Determine if Kubernetes webhook event represents a failure.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     event_type = payload.get("type", "").lower()
     reason = payload.get("reason", "").lower()
@@ -241,9 +205,6 @@ def is_kubernetes_failure_event(payload: Dict[str, Any]) -> bool:
 def extract_github_payload(payload: Dict[str, Any], event_type: str) -> Dict[str, Any]:
     """
     Extract and normalize GitHub webhook payload.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     if event_type == "workflow_run":
         workflow_run = payload.get("workflow_run", {})
@@ -288,9 +249,6 @@ def extract_github_payload(payload: Dict[str, Any], event_type: str) -> Dict[str
 def extract_argocd_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract and normalize ArgoCD webhook payload.
-    
-    Time Complexity: O(n) where n is number of conditions (typically small)
-    Space Complexity: O(1)
     """
     app = payload.get("application", {})
     metadata = app.get("metadata", {})
@@ -326,9 +284,6 @@ def extract_argocd_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 def extract_kubernetes_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract and normalize Kubernetes webhook payload.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     involved_object = payload.get("involvedObject", payload.get("involved_object", {}))
     
@@ -366,8 +321,7 @@ def extract_kubernetes_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     "/webhook/github/{user_id}",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
-    summary="GitHub webhook endpoint (path-based authentication)",
-    description="Receive GitHub webhooks with O(1) user lookup via path parameter",
+    summary="GitHub webhook endpoint",
     tags=["Webhook"],
 )
 async def receive_github_webhook(
@@ -381,26 +335,6 @@ async def receive_github_webhook(
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events with path-based authentication.
-    
-    Authentication Flow (O(1) complexity):
-    1. Extract user_id from URL path: /webhook/github/{user_id}
-    2. Single database query: SELECT * FROM users WHERE user_id = {user_id}
-    3. Verify HMAC-SHA256 signature with user's secret
-    
-    Time Complexity: O(1) - Constant time user lookup and verification
-    Space Complexity: O(n) where n is payload size
-    
-    Args:
-        user_id: User identifier from URL path
-        request: FastAPI request object
-        background_tasks: Background task queue
-        x_github_event: GitHub event type header
-        x_github_delivery: GitHub delivery ID header
-        body: Request body (verified by dependency)
-        event_processor: Event processor service
-        
-    Returns:
-        WebhookResponse: Acknowledgment response
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -474,8 +408,7 @@ async def receive_github_webhook(
     "/webhook/github/{user_id}/sync",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
-    summary="GitHub webhook endpoint (synchronous, path-based)",
-    description="Receive GitHub webhooks synchronously with O(1) user lookup",
+    summary="GitHub webhook endpoint (synchronous)",
     tags=["Webhook"],
 )
 async def receive_github_webhook_sync(
@@ -488,9 +421,6 @@ async def receive_github_webhook_sync(
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events synchronously.
-    
-    Time Complexity: O(1) for authentication + O(p) for processing where p is processing complexity
-    Space Complexity: O(n) where n is payload size
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -540,7 +470,7 @@ async def receive_github_webhook_sync(
     "/webhook/argocd/{user_id}",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
-    summary="ArgoCD webhook endpoint (path-based)",
+    summary="ArgoCD webhook endpoint",
     tags=["Webhook"],
 )
 async def receive_argocd_webhook(
@@ -553,9 +483,6 @@ async def receive_argocd_webhook(
 ) -> WebhookResponse:
     """
     Receive ArgoCD webhook events with path-based user identification.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(n) where n is payload size
     """
     incident_id = f"argo_{int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -601,7 +528,7 @@ async def receive_argocd_webhook(
     "/webhook/kubernetes/{user_id}",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
-    summary="Kubernetes event webhook endpoint (path-based)",
+    summary="Kubernetes event webhook endpoint",
     tags=["Webhook"],
 )
 async def receive_kubernetes_webhook(
@@ -614,9 +541,6 @@ async def receive_kubernetes_webhook(
 ) -> WebhookResponse:
     """
     Receive Kubernetes webhook events with path-based user identification.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(n) where n is payload size
     """
     incident_id = f"k8s_{int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -662,7 +586,7 @@ async def receive_kubernetes_webhook(
     "/webhook/generic/{user_id}",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
-    summary="Generic webhook endpoint (path-based)",
+    summary="Generic webhook endpoint",
     tags=["Webhook"],
 )
 async def receive_generic_webhook(
@@ -676,9 +600,6 @@ async def receive_generic_webhook(
 ) -> WebhookResponse:
     """
     Receive generic webhook events with path-based user identification.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(n) where n is payload size
     """
     incident_id = f"gen_{int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -739,9 +660,6 @@ async def process_webhook_async(
 ) -> None:
     """
     Process webhook event asynchronously.
-    
-    Time Complexity: O(p) where p is event processing complexity
-    Space Complexity: O(n) where n is payload size
     """
     try:
         result = await event_processor.process(
@@ -771,66 +689,41 @@ async def process_webhook_async(
     "/webhook/secret/generate/me",
     status_code=status.HTTP_201_CREATED,
     summary="Generate webhook secret for authenticated user",
-    description="Generate webhook secret for currently logged-in user with ready-to-use GitHub configuration",
     tags=["Webhook", "Security"],
 )
 async def generate_my_webhook_secret(
-    request: Request,
     db: Session = Depends(get_db),
+    current_user_data: dict = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """
     Generate new webhook secret for authenticated user with complete GitHub setup instructions.
-    
-    This endpoint:
-    - Generates a cryptographically secure 256-bit secret
-    - Stores it in the user's database record
-    - Returns the unique webhook URL for GitHub configuration
-    - Provides copy-paste ready instructions
-    
-    Authentication: Requires valid JWT token (imported from app.api.v1.auth)
-    Time Complexity: O(1) - Single database update
-    Space Complexity: O(1)
-    
-    Returns:
-        Dict containing:
-        - webhook_secret: The generated secret (SAVE THIS - shown only once)
-        - webhook_url: Your unique webhook endpoint URL
-        - github_config: Ready-to-use GitHub webhook configuration
-        - curl_example: Test command with your credentials
     """
-    # Import here to avoid circular dependency
-    from app.api.v1.auth import get_current_active_user
+    user = current_user_data["user"]
     
-    current_user_dict = await get_current_active_user(request)
-    current_user = current_user_dict["user"]
-    
-    from app.adapters.database.postgres.repositories.users import UserRepository
-    
-    user_repo = UserRepository(db)
     new_secret = generate_webhook_secret()
     
-    current_user.github_webhook_secret = new_secret
-    current_user.updated_at = datetime.utcnow()
+    user.github_webhook_secret = new_secret
+    user.updated_at = datetime.utcnow()
     db.commit()
-    db.refresh(current_user)
+    db.refresh(user)
     
     logger.info(
         "webhook_secret_generated_for_authenticated_user",
-        user_id=current_user.user_id,
-        email=current_user.email,
+        user_id=user.user_id,
+        email=user.email,
         secret_length=len(new_secret),
     )
     
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{current_user.user_id}"
+    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
         "success": True,
-        "message": "Webhook secret generated successfully! Configure it in GitHub now.",
+        "message": "Webhook secret generated successfully",
         "user": {
-            "user_id": current_user.user_id,
-            "email": current_user.email,
-            "full_name": current_user.full_name,
+            "user_id": user.user_id,
+            "email": user.email,
+            "full_name": user.full_name,
         },
         "webhook_secret": new_secret,
         "webhook_url": webhook_url,
@@ -849,7 +742,7 @@ async def generate_my_webhook_secret(
             "step_1": {
                 "action": "Copy your webhook secret",
                 "value": new_secret,
-                "note": "IMPORTANT: Save this secret now - it will not be shown again!",
+                "note": "Save this secret now - it will not be shown again",
             },
             "step_2": {
                 "action": "Go to your GitHub repository",
@@ -889,12 +782,6 @@ async def generate_my_webhook_secret(
 ''',
             "generate_test_signature": f"{base_url}/api/v1/webhook/secret/test/me",
         },
-        "benefits": {
-            "performance": "O(1) constant-time authentication - instant user lookup",
-            "security": "Isolated endpoint - your webhooks cannot interfere with other users",
-            "scalability": "Performance stays constant regardless of total user count",
-            "simplicity": "One URL for all your repositories - easy to manage",
-        },
     }
 
 
@@ -902,7 +789,6 @@ async def generate_my_webhook_secret(
     "/webhook/secret/generate",
     status_code=status.HTTP_201_CREATED,
     summary="Generate webhook secret (admin)",
-    description="Generate webhook secret for any user (requires admin privileges or user_id parameter)",
     tags=["Webhook", "Security", "Admin"],
 )
 async def create_webhook_secret(
@@ -911,16 +797,6 @@ async def create_webhook_secret(
 ) -> Dict[str, Any]:
     """
     Generate new webhook secret for specific user (admin endpoint).
-    
-    Time Complexity: O(1) - Single database query and update
-    Space Complexity: O(1)
-    
-    Args:
-        user_id: Target user ID
-        db: Database session
-        
-    Returns:
-        Dict containing webhook secret and configuration details
     """
     from app.adapters.database.postgres.repositories.users import UserRepository
     
@@ -958,7 +834,7 @@ async def create_webhook_secret(
         "algorithm": "HMAC-SHA256",
         "created_at": datetime.utcnow().isoformat(),
         "instructions": {
-            "step_1": "SAVE THIS SECRET NOW - It will not be shown again",
+            "step_1": "Save this secret now - it will not be shown again",
             "step_2": f"Copy the webhook_secret value: {new_secret}",
             "step_3": "Go to GitHub repository Settings > Webhooks",
             "step_4": f"Set Payload URL to: {webhook_url}",
@@ -967,12 +843,6 @@ async def create_webhook_secret(
             "step_7": "Select events: workflow_run, check_run",
             "step_8": "Save webhook configuration",
         },
-        "benefits": {
-            "performance": "O(1) constant-time user lookup (no iteration over all users)",
-            "security": "Isolated per-user endpoint prevents cross-user access",
-            "scalability": "Performance remains constant regardless of total user count",
-            "rate_limiting": "Per-user rate limits via path-based identification",
-        },
     }
 
 
@@ -980,55 +850,42 @@ async def create_webhook_secret(
     "/webhook/secret/info/me",
     status_code=status.HTTP_200_OK,
     summary="Get my webhook configuration",
-    description="Get webhook secret information for currently logged-in user",
     tags=["Webhook", "Security"],
 )
 async def get_my_webhook_info(
-    request: Request,
     db: Session = Depends(get_db),
+    current_user_data: dict = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """
     Get webhook configuration for authenticated user.
-    
-    Returns metadata about the user's webhook setup without revealing the actual secret.
-    
-    Authentication: Requires valid JWT token (imported from app.api.v1.auth)
-    Time Complexity: O(1) - User already loaded from token
-    Space Complexity: O(1)
-    
-    Returns:
-        Dict containing webhook configuration status and URLs
     """
-    from app.api.v1.auth import get_current_active_user
+    user = current_user_data["user"]
     
-    current_user_dict = await get_current_active_user(request)
-    current_user = current_user_dict["user"]
-    
-    has_secret = bool(current_user.github_webhook_secret)
+    has_secret = bool(user.github_webhook_secret)
     secret_preview = None
     
-    if has_secret and current_user.github_webhook_secret:
-        secret = current_user.github_webhook_secret
+    if has_secret and user.github_webhook_secret:
+        secret = user.github_webhook_secret
         if len(secret) > 8:
             secret_preview = f"{secret[:4]}...{secret[-4:]}"
         else:
             secret_preview = "****"
     
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{current_user.user_id}"
+    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
         "user": {
-            "user_id": current_user.user_id,
-            "email": current_user.email,
-            "full_name": current_user.full_name,
+            "user_id": user.user_id,
+            "email": user.email,
+            "full_name": user.full_name,
         },
         "webhook_configuration": {
             "secret_configured": has_secret,
             "secret_preview": secret_preview,
-            "secret_length": len(current_user.github_webhook_secret) if has_secret else 0,
+            "secret_length": len(user.github_webhook_secret) if has_secret else 0,
             "webhook_url": webhook_url,
-            "last_updated": current_user.updated_at.isoformat() if current_user.updated_at else None,
+            "last_updated": user.updated_at.isoformat() if user.updated_at else None,
         },
         "github_settings": {
             "payload_url": webhook_url,
@@ -1045,11 +902,6 @@ async def get_my_webhook_info(
             "test_signature": f"{base_url}/api/v1/webhook/secret/test/me",
             "webhook_endpoint": webhook_url,
         },
-        "authentication": {
-            "method": "Path-based with HMAC-SHA256",
-            "complexity": "O(1) constant-time lookup",
-            "isolation": "Per-user endpoint for security",
-        },
     }
 
 
@@ -1057,7 +909,6 @@ async def get_my_webhook_info(
     "/webhook/secret/info",
     status_code=status.HTTP_200_OK,
     summary="Get webhook secret information (admin)",
-    description="Get webhook secret metadata for specific user without revealing actual secret",
     tags=["Webhook", "Security", "Admin"],
 )
 async def get_webhook_secret_info(
@@ -1066,16 +917,6 @@ async def get_webhook_secret_info(
 ) -> Dict[str, Any]:
     """
     Get webhook secret configuration information for specific user.
-    
-    Time Complexity: O(1) - Single database query
-    Space Complexity: O(1)
-    
-    Args:
-        user_id: Target user ID
-        db: Database session
-        
-    Returns:
-        Dict containing webhook configuration metadata
     """
     from app.adapters.database.postgres.repositories.users import UserRepository
     
@@ -1108,11 +949,6 @@ async def get_webhook_secret_info(
         "secret_length": len(user.github_webhook_secret) if has_secret else 0,
         "webhook_url": webhook_url,
         "last_updated": user.updated_at.isoformat() if user.updated_at else None,
-        "authentication": {
-            "method": "Path-based with HMAC-SHA256",
-            "complexity": "O(1) constant-time lookup",
-            "isolation": "Per-user endpoint for security",
-        },
         "actions": {
             "generate_new": f"{base_url}/api/v1/webhook/secret/generate?user_id={user_id}",
             "test_signature": f"{base_url}/api/v1/webhook/secret/test?user_id={user_id}",
@@ -1124,42 +960,19 @@ async def get_webhook_secret_info(
     "/webhook/secret/test/me",
     status_code=status.HTTP_200_OK,
     summary="Test my webhook signature",
-    description="Generate test signature using authenticated user's webhook secret",
     tags=["Webhook", "Security"],
 )
 async def test_my_webhook_signature(
     request: Request,
     db: Session = Depends(get_db),
+    current_user_data: dict = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """
     Generate test signature for webhook payload using authenticated user's secret.
-    
-    This helps you:
-    - Test your webhook integration
-    - Verify signature generation
-    - Debug signature validation issues
-    
-    Authentication: Requires valid JWT token (imported from app.api.v1.auth)
-    Time Complexity: O(1) - Single HMAC computation
-    Space Complexity: O(n) where n is payload size
-    
-    Returns:
-        Dict containing generated signature and usage examples
-        
-    Example usage:
-        ```bash
-        curl -X POST "http://localhost:8000/api/v1/webhook/secret/test/me" \\
-          -H "Authorization: Bearer YOUR_JWT_TOKEN" \\
-          -H "Content-Type: application/json" \\
-          -d '{"action": "completed", "workflow_run": {"conclusion": "failure"}}'
-        ```
     """
-    from app.api.v1.auth import get_current_active_user
+    user = current_user_data["user"]
     
-    current_user_dict = await get_current_active_user(request)
-    current_user = current_user_dict["user"]
-    
-    if not current_user.github_webhook_secret:
+    if not user.github_webhook_secret:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No webhook secret configured. Generate one using POST /api/v1/webhook/secret/generate/me",
@@ -1168,7 +981,7 @@ async def test_my_webhook_signature(
     body = await request.body()
     
     signature = hmac.new(
-        current_user.github_webhook_secret.encode(),
+        user.github_webhook_secret.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
@@ -1177,19 +990,19 @@ async def test_my_webhook_signature(
     
     logger.info(
         "webhook_test_signature_generated_authenticated",
-        user_id=current_user.user_id,
+        user_id=user.user_id,
         payload_size=len(body),
         signature_prefix=signature[:16] + "...",
     )
     
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://your-server.com"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{current_user.user_id}"
+    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
     
     return {
         "success": True,
         "user": {
-            "user_id": current_user.user_id,
-            "email": current_user.email,
+            "user_id": user.user_id,
+            "email": user.email,
         },
         "test_results": {
             "payload_hash": payload_hash,
@@ -1222,7 +1035,6 @@ async def test_my_webhook_signature(
     "/webhook/secret/test",
     status_code=status.HTTP_200_OK,
     summary="Test webhook signature (admin)",
-    description="Generate test signature for specific user's webhook secret",
     tags=["Webhook", "Security", "Admin"],
 )
 async def test_webhook_signature(
@@ -1232,17 +1044,6 @@ async def test_webhook_signature(
 ) -> Dict[str, Any]:
     """
     Generate test signature for webhook payload using specific user's secret.
-    
-    Time Complexity: O(1) - Single database query + single HMAC computation
-    Space Complexity: O(n) where n is payload size
-    
-    Args:
-        request: FastAPI request containing test payload
-        user_id: Target user ID
-        db: Database session
-        
-    Returns:
-        Dict containing generated signature and usage examples
     """
     from app.adapters.database.postgres.repositories.users import UserRepository
     
@@ -1258,7 +1059,7 @@ async def test_webhook_signature(
     if not user.github_webhook_secret:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No webhook secret configured for user '{user_id}'. Generate one using POST /api/v1/webhook/secret/generate",
+            detail=f"No webhook secret configured for user '{user_id}'",
         )
     
     body = await request.body()
@@ -1311,19 +1112,11 @@ async def test_webhook_signature(
 async def webhook_health() -> Dict[str, Any]:
     """
     Health check endpoint for webhook service.
-    
-    Time Complexity: O(1)
-    Space Complexity: O(1)
     """
     return {
         "status": "healthy",
         "endpoint": "webhook",
         "timestamp": datetime.utcnow().isoformat(),
-        "authentication": {
-            "method": "Path-based",
-            "complexity": "O(1)",
-            "description": "Constant-time user lookup via URL path parameter",
-        },
         "features": {
             "github": True,
             "argocd": True,
