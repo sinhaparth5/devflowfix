@@ -7,6 +7,8 @@ from fastapi import APIRouter, Request, HTTPException, status, Header, Depends, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import structlog
+import secrets
+import base64
 
 from app.core.schemas.webhook import WebhookPayload, WebhookResponse
 from app.core.config import settings
@@ -19,43 +21,112 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+def generate_webhook_secret() -> str:
+    """
+    Generate a cryptographically secure random webhook secret.
+    
+    Returns a URL-safe base64-encoded string (43 characters).
+    Similar to: 1zCC4or5bOkGQJYBi8uRUcJVpxvWS3nAoTJ0hYb7RoI
+    """
+    random_bytes = secrets.token_bytes(32)  # 32 bytes = 256 bits
+    secret = base64.urlsafe_b64encode(random_bytes).decode('utf-8').rstrip('=')
+    return secret
+
+
 async def verify_github_webhook_signature(
     request: Request,
     x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
-) -> bytes:
+    db: Session = Depends(get_db),
+) -> tuple[bytes, Optional[str]]:
     """
-    Verify GitHub webhook signature before processing.
-    This dependency runs before database session creation to avoid false database errors.
+    Verify GitHub webhook signature and identify user.
     
-    Returns the request body if signature is valid.
-    Raises HTTPException if signature is invalid.
+    Works like email/password authentication:
+    1. GitHub sends webhook with signature in X-Hub-Signature-256 header
+    2. We try to verify the signature against ALL user secrets in database
+    3. If signature matches any user's secret, that user is authenticated
+    4. Returns (request body, user_id) if authenticated
+    
+    This is secure because:
+    - The webhook secret is cryptographically random (256 bits)
+    - Signature uses HMAC-SHA256 (impossible to forge without secret)
+    - Each user has unique secret
+    - Secret lookup identifies the user (like password identifies user)
+    
+    Raises HTTPException if signature is invalid or no matching user found.
     """
     body = await request.body()
-    
-    # Convert header to string if needed
     signature_header = str(x_hub_signature_256) if x_hub_signature_256 else None
     
-    if settings.github_webhook_secret:
-        if not _verify_github_signature(body, signature_header, settings.github_webhook_secret):
-            logger.error(
-                "github_webhook_invalid_signature",
-                has_signature=bool(signature_header),
-                signature_prefix=signature_header[:20] if signature_header else None,
-                body_length=len(body),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid webhook signature",
-            )
+    if not signature_header:
+        logger.error(
+            "github_webhook_no_signature",
+            body_length=len(body),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-Hub-Signature-256 header. Please configure webhook secret in your GitHub repository settings.",
+        )
     
-    return body
+    from app.adapters.database.postgres.repositories.users import UserRepository
+    user_repo = UserRepository(db)
+    
+    from sqlalchemy import select, and_
+    from app.adapters.database.postgres.models import UserTable
+    
+    stmt = select(UserTable).where(
+        and_(
+            UserTable.github_webhook_secret.isnot(None),
+            UserTable.is_active == True
+        )
+    )
+    result = db.execute(stmt)
+    users_with_secrets = result.scalars().all()
+    
+    if not users_with_secrets:
+        logger.error(
+            "github_webhook_no_users_configured",
+            has_signature=bool(signature_header),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No users have configured webhook secrets. Please generate a secret first using POST /api/v1/webhook/secret/generate",
+        )
+    
+    # Try to verify signature against each user's secret (like trying passwords)
+    authenticated_user = None
+    for user in users_with_secrets:
+        if _verify_github_signature(body, signature_header, user.github_webhook_secret):
+            authenticated_user = user
+            break
+    
+    if not authenticated_user:
+        logger.error(
+            "github_webhook_invalid_signature",
+            has_signature=bool(signature_header),
+            signature_prefix=signature_header[:20] if signature_header else None,
+            body_length=len(body),
+            users_checked=len(users_with_secrets),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature. The signature does not match any configured user webhook secret.",
+        )
+    
+    logger.info(
+        "github_webhook_authenticated",
+        user_id=authenticated_user.user_id,
+        email=authenticated_user.email,
+        signature_verified=True,
+    )
+    
+    return body, authenticated_user.user_id
 
 
 def _verify_github_signature(body: bytes, signature: str, secret: str) -> bool:
     import hmac
     import hashlib
     
-    # Convert signature to string if it's not already
     if signature is not None:
         signature = str(signature)
     
@@ -237,16 +308,22 @@ async def receive_github_webhook(
     background_tasks: BackgroundTasks,
     x_github_event: str = Header(...),
     x_github_delivery: Optional[str] = Header(None),
-    body: bytes = Depends(verify_github_webhook_signature),
-    db: Session = Depends(get_db),
+    verified_data: tuple[bytes, Optional[str]] = Depends(verify_github_webhook_signature),
     event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events.
     
-    Signature verification happens via the verify_github_webhook_signature dependency
-    BEFORE the database session is created, preventing false database_session_error logs.
+    Authentication Flow (like email/password login):
+    1. GitHub sends webhook with payload + signature in X-Hub-Signature-256 header
+    2. System verifies signature against all user webhook secrets in database
+    3. Matching secret identifies and authenticates the user automatically
+    4. No user_id header needed - the secret IS the authentication
+    
+    Security: Each user has a unique cryptographic secret (256-bit random).
+    The HMAC-SHA256 signature proves the webhook came from someone with that secret.
     """
+    body, user_id = verified_data
     
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -255,6 +332,7 @@ async def receive_github_webhook(
         incident_id=incident_id,
         event_type=x_github_event,
         delivery_id=x_github_delivery,
+        user_id=user_id,
     )
     
     if x_github_event == "ping":
@@ -318,15 +396,15 @@ async def receive_github_webhook_sync(
     request: Request,
     x_github_event: str = Header(...),
     x_github_delivery: Optional[str] = Header(None),
-    body: bytes = Depends(verify_github_webhook_signature),
-    db: Session = Depends(get_db),
+    verified_data: tuple[bytes, Optional[str]] = Depends(verify_github_webhook_signature),
     event_processor: EventProcessor = Depends(get_event_processor),
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events synchronously.
     
-    Signature verification happens via dependency before database session creation.
+    Signature verification happens via dependency.
     """
+    body, user_id = verified_data
     
     incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
     
@@ -566,13 +644,258 @@ async def _process_webhook_async(
 
 
 @router.post(
+    "/webhook/secret/generate",
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate or regenerate GitHub webhook secret",
+    description="Generate a new cryptographically secure webhook secret for a user. This replaces any existing secret.",
+    tags=["Webhook", "Security"],
+)
+async def create_webhook_secret(
+    user_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Generate a new webhook secret for a user.
+    
+    This endpoint:
+    - Generates a cryptographically secure random secret (256 bits)
+    - Stores it in the user's database record
+    - Returns the secret to the user (ONLY time it will be shown in plain text)
+    
+    **IMPORTANT**: Save this secret immediately! You'll need to configure it in your GitHub webhook settings.
+    
+    The secret will be used to verify webhook signatures using HMAC-SHA256.
+    
+    Example usage:
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/webhook/secret/generate?user_id=shine"
+    ```
+    
+    Returns:
+    - webhook_secret: The generated secret (save this!)
+    - user_id: The user ID
+    - instructions: How to configure GitHub webhook
+    """
+    from app.adapters.database.postgres.repositories.users import UserRepository
+    
+    user_repo = UserRepository(db)
+    user = user_repo.get_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User '{user_id}' not found",
+        )
+    
+    # Generate new secret
+    new_secret = generate_webhook_secret()
+    
+    # Update user record
+    user.github_webhook_secret = new_secret
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    
+    logger.info(
+        "webhook_secret_generated",
+        user_id=user_id,
+        secret_length=len(new_secret),
+    )
+    
+    return {
+        "success": True,
+        "user_id": user_id,
+        "webhook_secret": new_secret,
+        "secret_length": len(new_secret),
+        "algorithm": "HMAC-SHA256",
+        "created_at": datetime.utcnow().isoformat(),
+        "instructions": {
+            "step_1": "⚠️ SAVE THIS SECRET NOW - It won't be shown again!",
+            "step_2": "Copy the 'webhook_secret' value above",
+            "step_3": "Go to your GitHub repository → Settings → Webhooks",
+            "step_4": "Add or edit your webhook",
+            "step_5": "Paste the secret in the 'Secret' field",
+            "step_6": "Set Payload URL to your DevFlowFix webhook endpoint",
+            "step_7": "Set Content type to 'application/json'",
+            "step_8": "Select events: workflow_run, check_run",
+            "authentication": "🔐 The webhook secret authenticates you automatically - no user_id needed!",
+            "how_it_works": "GitHub signs each webhook with your secret. We verify the signature and identify you from our database.",
+        },
+        "webhook_endpoint": {
+            "url": f"{settings.api_url}/api/v1/webhook/github" if hasattr(settings, 'api_url') else "/api/v1/webhook/github",
+            "method": "POST",
+            "headers_sent_by_github": {
+                "X-Hub-Signature-256": "sha256=<computed_signature>",
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": "<unique_delivery_id>",
+            },
+            "note": "GitHub automatically sends X-Hub-Signature-256 header. No custom headers needed from you!",
+        },
+    }
+
+
+@router.get(
+    "/webhook/secret/info",
+    status_code=status.HTTP_200_OK,
+    summary="Get webhook secret information",
+    description="Get information about a user's webhook secret (without revealing the actual secret)",
+    tags=["Webhook", "Security"],
+)
+async def get_webhook_secret_info(
+    user_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Get information about a user's webhook secret configuration.
+    
+    Returns metadata about the secret without revealing the actual value.
+    
+    Example usage:
+    ```bash
+    curl "http://localhost:8000/api/v1/webhook/secret/info?user_id=shine"
+    ```
+    """
+    from app.adapters.database.postgres.repositories.users import UserRepository
+    
+    user_repo = UserRepository(db)
+    user = user_repo.get_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User '{user_id}' not found",
+        )
+    
+    has_secret = bool(user.github_webhook_secret)
+    secret_preview = None
+    
+    if has_secret and user.github_webhook_secret:
+        # Show only first and last 4 characters
+        secret = user.github_webhook_secret
+        if len(secret) > 8:
+            secret_preview = f"{secret[:4]}...{secret[-4:]}"
+        else:
+            secret_preview = "****"
+    
+    return {
+        "user_id": user_id,
+        "secret_configured": has_secret,
+        "secret_preview": secret_preview,
+        "secret_length": len(user.github_webhook_secret) if has_secret else 0,
+        "last_updated": user.updated_at.isoformat() if user.updated_at else None,
+        "webhook_endpoint": f"/api/v1/webhook/github",
+        "required_headers": {
+            "X-Hub-Signature-256": "sha256=<signature>",
+            "X-DevFlowFix-User-ID": user_id,
+            "X-GitHub-Event": "<event_type>",
+        },
+        "actions": {
+            "generate_new": f"/api/v1/webhook/secret/generate?user_id={user_id}",
+            "test_signature": f"/api/v1/webhook/secret/test?user_id={user_id}",
+        },
+    }
+
+
+@router.post(
+    "/webhook/secret/test",
+    status_code=status.HTTP_200_OK,
+    summary="Test webhook signature generation",
+    description="Generate a test signature for a payload using the user's webhook secret",
+    tags=["Webhook", "Security"],
+)
+async def test_webhook_signature(
+    request: Request,
+    user_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Generate a test signature for the provided payload using the user's webhook secret.
+    
+    This endpoint helps you:
+    - Test your webhook integration
+    - Verify signature generation is working correctly
+    - Debug signature validation issues
+    
+    Example usage:
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/webhook/secret/test?user_id=shine" \\
+      -H "Content-Type: application/json" \\
+      -d '{"action": "completed", "workflow_run": {...}}'
+    ```
+    
+    Returns the signature that should match what GitHub sends.
+    """
+    import hmac
+    import hashlib
+    
+    from app.adapters.database.postgres.repositories.users import UserRepository
+    
+    user_repo = UserRepository(db)
+    user = user_repo.get_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User '{user_id}' not found",
+        )
+    
+    if not user.github_webhook_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No webhook secret configured for user '{user_id}'. Generate one first using POST /api/v1/webhook/secret/generate",
+        )
+    
+    body = await request.body()
+    
+    # Compute signature
+    signature = hmac.new(
+        user.github_webhook_secret.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    
+    # Compute payload hash for reference
+    payload_hash = hashlib.sha256(body).hexdigest()
+    
+    logger.info(
+        "webhook_test_signature_generated",
+        user_id=user_id,
+        payload_size=len(body),
+        signature_prefix=signature[:16] + "...",
+    )
+    
+    return {
+        "success": True,
+        "user_id": user_id,
+        "payload_hash": payload_hash,
+        "signature": signature,
+        "full_header": f"sha256={signature}",
+        "payload_size": len(body),
+        "usage": {
+            "header_name": "X-Hub-Signature-256",
+            "header_value": f"sha256={signature}",
+            "user_id_header": "X-DevFlowFix-User-ID",
+            "user_id_value": user_id,
+            "example_curl": f'''curl -X POST http://localhost:8000/api/v1/webhook/github \\
+  -H "Content-Type: application/json" \\
+  -H "X-Hub-Signature-256: sha256={signature}" \\
+  -H "X-DevFlowFix-User-ID: {user_id}" \\
+  -H "X-GitHub-Event: workflow_run" \\
+  --data '@payload.json' ''',
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@router.post(
     "/webhook/generate-signature",
     status_code=status.HTTP_200_OK,
-    summary="Generate GitHub webhook signature",
-    description="Generate HMAC-SHA256 signature for webhook payload validation and testing",
+    summary="Generate GitHub webhook signature (legacy - env secret)",
+    description="Generate HMAC-SHA256 signature using environment variable secret (deprecated)",
     tags=["Webhook"],
+    deprecated=True,
 )
-async def generate_webhook_signature(
+async def generate_webhook_signature_legacy(
     request: Request,
 ) -> Dict[str, Any]:
     """

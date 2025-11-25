@@ -5,10 +5,11 @@ from datetime import datetime, time
 from typing import Optional
 import structlog
 
-from app.domain.rules.base import BaseRule
+from app.domain.rules.base import BaseRule, RuleResult
 from app.core.models.analysis import AnalysisResult
 from app.core.models.incident import Incident
 from app.core.models.context import ExecutionContext
+from app.core.models.remediation import RemediationPlan
 
 logger = structlog.get_logger(__name__)
 
@@ -32,24 +33,26 @@ class TimeWindowRule(BaseRule):
         """ Get the rule name. """
         return "TimeWindowRule"
     
-    def evaluate(
+    async def evaluate(
         self,
         incident: Incident,
-        context: ExecutionContext,
-        analysis: Optional[AnalysisResult] = None,
-    ) -> bool:
+        plan: Optional[RemediationPlan] = None,
+    ) -> RuleResult:
         
         now = datetime.utcnow()
         current_time = now.time()
         
         if not (self.allowed_start <= current_time <= self.allowed_end):
-            return self._set_failure(
-                f"Current time {current_time} outside allowed window "
-                f"{self.allowed_start}-{self.allowed_end}"
+            return self._create_result(
+                passed=False,
+                message=f"Current time {current_time} outside allowed window {self.allowed_start}-{self.allowed_end}",
             )
         
         if self.block_weekends and now.weekday() >= 5:
-            return self._set_failure("Weekend deployments are blocked")
+            return self._create_result(
+                passed=False,
+                message="Weekend deployments are blocked",
+            )
         
         if self.block_business_hours:
             business_start = time(9, 0)
@@ -57,6 +60,14 @@ class TimeWindowRule(BaseRule):
             
             if business_start <= current_time <= business_end:
                 if now.weekday() < 5:
-                    return self._set_failure("Business hours deployments are blocked")
+                    return self._create_result(
+                        passed=False,
+                        message="Business hours deployments are blocked",
+                    )
+        
+        return self._create_result(
+            passed=True,
+            message="Time window check passed",
+        )
         
         return True

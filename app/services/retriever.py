@@ -27,7 +27,7 @@ class RetrieverService:
         self.default_top_k = default_top_k
         self.default_similarity_threshold = default_similarity_threshold
         self.cache_ttl_seconds = cache_ttl_seconds
-        self._cache: Dict[str, Tuple[List[Dict], datetime]]
+        self._cache: Dict[str, Tuple[List[Dict], datetime]] = {}
 
     async def retrieve_similar_incidents(
             self,
