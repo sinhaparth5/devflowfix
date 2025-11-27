@@ -98,11 +98,11 @@ class VectorDBStrategy(BaseStrategy):
         for inc in similar_incident[:5]:
             resolved_at = inc.get("resolved_at")
             if resolved_at:
-                from datetime import datetime, timedelta
+                from datetime import datetime, timezone, timedelta
                 if isinstance(resolved_at, str):
                     resolved_at = datetime.fromisoformat(resolved_at)
 
-                    age_days = (datetime.utcnow() - resolved_at).days
+                    age_days = (datetime.now(timezone.utc) - resolved_at).days
 
                     if age_days <= 7:
                         recent_count += 1

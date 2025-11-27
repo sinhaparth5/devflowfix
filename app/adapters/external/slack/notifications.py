@@ -12,7 +12,7 @@ Sends rich formatted notifications to Slack channels for:
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.config import Settings
 from app.core.models.incident import Incident
@@ -21,7 +21,7 @@ from app.core.enums import (
     Fixability,
     ConfidenceLevel,
     Outcome,
-    NotifcationType,
+    NotificationType,
 )
 from app.adapters.external.slack.client import SlackClient
 from app.utils.logging import get_logger
@@ -102,7 +102,7 @@ class SlackNotificationAdapter:
         self,
         incident: Incident,
         similar_incidents: Optional[List[Dict[str, Any]]] = None,
-        notification_type: NotifcationType = NotifcationType.INCIDENT_DETECTED,
+        notification_type: NotificationType = NotificationType.INCIDENT_DETECTED,
     ) -> Dict[str, Any]:
         """
         Post incident notification to #incidents channel with rich formatting.
@@ -122,7 +122,7 @@ class SlackNotificationAdapter:
         )
         
         channel = self.incidents_channel
-        if notification_type == NotifcationType.APPROVAL_REQUESTED:
+        if notification_type == NotificationType.APPROVAL_REQUESTED:
             channel = self.approvals_channel
         
         logger.info(
@@ -162,7 +162,7 @@ class SlackNotificationAdapter:
         self,
         incident: Incident,
         similar_incidents: List[Dict[str, Any]],
-        notification_type: NotifcationType,
+        notification_type: NotificationType,
     ) -> List[Dict[str, Any]]:
         """
         Build Slack blocks for incident notification.
@@ -353,7 +353,7 @@ class SlackNotificationAdapter:
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": f"DevFlowFix AI • <!date^{int(datetime.utcnow().timestamp())}^{{date_short_pretty}} {{time}}|{datetime.utcnow().isoformat()}>"
+                    "text": f"DevFlowFix AI • <!date^{int(datetime.now(timezone.utc).timestamp())}^{{date_short_pretty}} {{time}}|{datetime.now(timezone.utc).isoformat()}>"
                 }
             ]
         })
@@ -431,7 +431,7 @@ class SlackNotificationAdapter:
     def _get_fallback_text(
         self,
         incident: Incident,
-        notification_type: NotifcationType,
+        notification_type: NotificationType,
     ) -> str:
         """
         Get fallback text for notification (used in notifications).

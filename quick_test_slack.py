@@ -14,7 +14,7 @@ Usage:
 
 import asyncio
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add project root to path
 import os
@@ -74,8 +74,8 @@ async def quick_test():
     print("-"*70)
     
     low_incident = Incident(
-        incident_id=f"inc_test_low_{datetime.utcnow().strftime('%H%M%S')}",
-        timestamp=datetime.utcnow(),
+        incident_id=f"inc_test_low_{datetime.now(timezone.utc).strftime('%H%M%S')}",
+        timestamp=datetime.now(timezone.utc),
         source=IncidentSource.GITHUB,
         severity=Severity.MEDIUM,
         failure_type=FailureType.BUILD_FAILURE,
@@ -138,8 +138,8 @@ async def quick_test():
     await asyncio.sleep(2)  # Small delay
     
     high_incident = Incident(
-        incident_id=f"inc_test_high_{datetime.utcnow().strftime('%H%M%S')}",
-        timestamp=datetime.utcnow(),
+        incident_id=f"inc_test_high_{datetime.now(timezone.utc).strftime('%H%M%S')}",
+        timestamp=datetime.now(timezone.utc),
         source=IncidentSource.GITHUB,
         severity=Severity.LOW,
         failure_type=FailureType.TEST_FAILURE,

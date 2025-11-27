@@ -4,7 +4,7 @@
 """Repository for metrics CRUD operations."""
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_
 
@@ -55,7 +55,7 @@ class MetricRepository:
             value=value,
             unit=unit,
             labels=labels or {},
-            timestamp=timestamp or datetime.utcnow(),
+            timestamp=timestamp or datetime.now(timezone.utc),
         )
         
         self.session.add(metric)
@@ -187,7 +187,7 @@ class MetricRepository:
         Returns:
             Number of metrics deleted
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         stmt = select(MetricTable).where(MetricTable.timestamp < cutoff_date)
         result = self.session.execute(stmt)
@@ -376,7 +376,7 @@ class MetricRepository:
         Returns:
             List of recent MetricTable objects
         """
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         stmt = select(MetricTable).where(MetricTable.timestamp >= cutoff_time)
         

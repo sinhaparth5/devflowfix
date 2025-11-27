@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_, func
@@ -54,7 +54,7 @@ class UserRepository:
     def update(self, user: UserTable) -> UserTable:
         """Update an existing user."""
         try:
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(user)
             return user
@@ -68,7 +68,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.is_active = False
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             return True
         return False
@@ -113,7 +113,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.failed_login_attempts += 1
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             return user.failed_login_attempts
         return 0
@@ -124,7 +124,7 @@ class UserRepository:
         if user:
             user.failed_login_attempts = 0
             user.locked_until = None
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def lock_user(self, user_id: str, until: datetime) -> None:
@@ -132,7 +132,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.locked_until = until
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def update_last_login(
@@ -144,12 +144,12 @@ class UserRepository:
         """Update last login information."""
         user = self.get_by_id(user_id)
         if user:
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = datetime.now(timezone.utc)
             user.last_login_ip = ip_address
             user.last_login_user_agent = user_agent
             user.failed_login_attempts = 0
             user.locked_until = None
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def update_token_version(self, user_id: str) -> int:
@@ -157,7 +157,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.token_version += 1
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             return user.token_version
         return 0
@@ -167,7 +167,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.refresh_token_hash = token_hash
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def set_api_key(self, user_id: str, key_hash: str, key_prefix: str) -> None:
@@ -176,7 +176,7 @@ class UserRepository:
         if user:
             user.api_key_hash = key_hash
             user.api_key_prefix = key_prefix
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def verify_email(self, user_id: str) -> None:
@@ -184,7 +184,7 @@ class UserRepository:
         user = self.get_by_id(user_id)
         if user:
             user.is_verified = True
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def enable_mfa(self, user_id: str, mfa_secret: str) -> None:
@@ -193,7 +193,7 @@ class UserRepository:
         if user:
             user.is_mfa_enabled = True
             user.mfa_secret = mfa_secret
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def disable_mfa(self, user_id: str) -> None:
@@ -202,7 +202,7 @@ class UserRepository:
         if user:
             user.is_mfa_enabled = False
             user.mfa_secret = None
-            user.updated_at = datetime.utcnow()
+            user.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
 
@@ -237,7 +237,7 @@ class SessionRepository:
                 UserSessionTable.session_id == session_id,
                 UserSessionTable.is_active == True,
                 UserSessionTable.is_revoked == False,
-                UserSessionTable.expires_at > datetime.utcnow()
+                UserSessionTable.expires_at > datetime.now(timezone.utc)
             )
         ).first()
 
@@ -256,7 +256,7 @@ class SessionRepository:
                 and_(
                     UserSessionTable.is_active == True,
                     UserSessionTable.is_revoked == False,
-                    UserSessionTable.expires_at > datetime.utcnow()
+                    UserSessionTable.expires_at > datetime.now(timezone.utc)
                 )
             )
 
@@ -266,7 +266,7 @@ class SessionRepository:
         """Update session last used time."""
         session = self.get_by_id(session_id)
         if session:
-            session.last_used_at = datetime.utcnow()
+            session.last_used_at = datetime.now(timezone.utc)
             self.db.commit()
 
     def revoke_session(self, session_id: str, reason: str = None) -> bool:
@@ -298,7 +298,7 @@ class SessionRepository:
     def cleanup_expired_sessions(self) -> int:
         """Remove expired sessions."""
         result = self.db.query(UserSessionTable).filter(
-            UserSessionTable.expires_at < datetime.utcnow()
+            UserSessionTable.expires_at < datetime.now(timezone.utc)
         ).delete()
         self.db.commit()
         return result
@@ -310,7 +310,7 @@ class SessionRepository:
                 UserSessionTable.user_id == user_id,
                 UserSessionTable.is_active == True,
                 UserSessionTable.is_revoked == False,
-                UserSessionTable.expires_at > datetime.utcnow()
+                UserSessionTable.expires_at > datetime.now(timezone.utc)
             )
         ).count()
 

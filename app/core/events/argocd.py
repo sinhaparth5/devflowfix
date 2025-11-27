@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import structlog
 
@@ -37,7 +37,7 @@ class ArgoCDSyncEvent(BaseEvent):
         """Initialize and parse after dataclass creation."""
         self.source = IncidentSource.ARGOCD
         if not self.timestamp:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
         self.parse()
     
     def parse(self) -> None:
@@ -57,7 +57,7 @@ class ArgoCDSyncEvent(BaseEvent):
             metadata = application.get("metadata", {})
             self.application_name = metadata.get("name")
             self.namespace = metadata.get("namespace")
-            self.event_id = f"argocd_{self.application_name}_{int(datetime.utcnow().timestamp())}"
+            self.event_id = f"argocd_{self.application_name}_{int(datetime.now(timezone.utc).timestamp())}"
             
             # Spec
             spec = application.get("spec", {})
@@ -164,7 +164,7 @@ class ArgoCDSyncEvent(BaseEvent):
         try:
             return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
         except Exception:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
     
     def is_failure_event(self) -> bool:
         """

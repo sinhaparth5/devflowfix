@@ -4,7 +4,7 @@
 """Repository for configuration CRUD operations."""
 
 from typing import List, Optional, Any, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_
 
@@ -186,7 +186,7 @@ class ConfigRepository:
             config.updated_by = updated_by
         
         # Update the updated_at timestamp
-        config.updated_at = datetime.utcnow()
+        config.updated_at = datetime.now(timezone.utc)
         
         self.session.commit()
         self.session.refresh(config)

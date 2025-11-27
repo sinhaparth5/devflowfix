@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -98,7 +98,7 @@ class Incident:
         if self.resolved_at:
             end_time = self.resolved_at
         else:
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
 
         duration = (end_time - self.timestamp).total_seconds()
         return max(0, int(duration))
@@ -128,15 +128,15 @@ class Incident:
         """
         self.outcome = outcome
         self.outcome_message = message
-        self.resolved_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.resolved_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         self.resolution_time_seconds = self.calculate_duration()
 
     def start_remediation(self) -> None:
         """ Mark the start of remediation execution """
-        self.remediation_start_time = datetime.utcnow()
+        self.remediation_start_time = datetime.now(timezone.utc)
         self.remediation_executed = True
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def end_remediation(self, success: bool, message: Optional[str] = None) -> None:
         """
@@ -146,8 +146,8 @@ class Incident:
             success: Whether remediaiton succeeded
             message: Optional message about the outcome
         """
-        self.remediation_end_time = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.remediation_end_time = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
 
         if success:
             self.mark_resolved(Outcome.SUCCESS, message)
@@ -172,9 +172,9 @@ class Incident:
             "helpful": helpful,
             "comment": comment,
             "user": user,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def add_approval(self, approver: str) -> None:
         """
@@ -183,20 +183,20 @@ class Incident:
             approver: Username/email of person who approved
         """
         self.approved_by = approver
-        self.approved_timestamp = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.approved_timestamp = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
 
     def add_tag(self, tag: str) -> None:
         """ Add a tag to the incident """
         if tag not in self.tags:
             self.tags.append(tag)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def remove_tag(self, tag: str) -> None:
         """ Remove a tag from the incident. """
         if tag in self.tags:
             self.tags.remove(tag)
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def get_service_name(self) -> Optional[str]:
         """ Extract service name from context """

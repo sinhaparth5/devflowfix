@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-from datetime import datetime, time
+from datetime import datetime, timezone, time
 from typing import Optional
 import structlog
 
@@ -39,7 +39,7 @@ class TimeWindowRule(BaseRule):
         plan: Optional[RemediationPlan] = None,
     ) -> RuleResult:
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_time = now.time()
         
         if not (self.allowed_start <= current_time <= self.allowed_end):

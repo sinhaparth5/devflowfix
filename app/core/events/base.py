@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from enum import Enum
 
@@ -158,7 +158,7 @@ class GenericEvent(BaseEvent):
     
     def parse(self) -> None:
         """Parse generic event (minimal processing)."""
-        self.event_id = self.raw_payload.get("id", str(int(datetime.utcnow().timestamp())))
+        self.event_id = self.raw_payload.get("id", str(int(datetime.now(timezone.utc).timestamp())))
         self.error_message = "Generic event - no specific parser available"
     
     def is_failure_event(self) -> bool:

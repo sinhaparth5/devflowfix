@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.core.enums import RemediationActionType, RiskLevel, Outcome
@@ -117,7 +117,7 @@ class RemediationResult:
 
     def add_log(self, log: str) -> None:
         """ And an execution log entry. """
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         self.execution_logs.append(f"[{timestamp}] {log}")
 
     def set_error(self, error_message: str, traceback: Optional[str] = None) -> None:
@@ -171,12 +171,12 @@ class RollbackSnapshot:
         """ Check if snapshot has expired """
         if not self.expires_at:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def mark_restored(self) -> None:
         """ Mark snapshot as restored """
         self.is_restored = True
-        self.restored_at = datetime.utcnow()
+        self.restored_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> dict:
         """ Convert to dictionary """

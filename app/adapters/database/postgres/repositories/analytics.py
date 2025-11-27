@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func, desc, and_, or_, case, text
 from sqlalchemy.orm import Session
 import structlog
@@ -182,7 +182,7 @@ class AnalyticsRepository:
         granularity: str = "day",
     ) -> List[Dict[str, Any]]:
         try:
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
             
             if granularity == "hour":
                 date_trunc = func.date_trunc('hour', IncidentTable.created_at)
@@ -463,7 +463,7 @@ class AnalyticsRepository:
         days: int = 30,
     ) -> Dict[int, int]:
         try:
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
             
             query = self.session.query(
                 func.extract('hour', IncidentTable.created_at).label('hour'),
@@ -491,7 +491,7 @@ class AnalyticsRepository:
         days: int = 30,
     ) -> Dict[str, int]:
         try:
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
             
             query = self.session.query(
                 func.to_char(IncidentTable.created_at, 'Day').label('day'),
@@ -563,7 +563,7 @@ class AnalyticsRepository:
                 value=value,
                 unit=unit,
                 labels=labels or {},
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
             
             self.session.add(metric)
@@ -601,7 +601,7 @@ class AnalyticsRepository:
     
     def get_dashboard_summary(self) -> Dict[str, Any]:
         try:
-            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             week_ago = today - timedelta(days=7)
             month_ago = today - timedelta(days=30)
             
@@ -620,7 +620,7 @@ class AnalyticsRepository:
                 "mttr": mttr,
                 "auto_fix_rate": auto_fix,
                 "feedback": feedback,
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             }
             
         except Exception as e:

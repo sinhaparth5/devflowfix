@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_, func, desc
@@ -41,7 +41,7 @@ class IncidentRepository:
     def update(self, incident: IncidentTable) -> IncidentTable:
         """Update an existing incident."""
         try:
-            incident.updated_at = datetime.utcnow()
+            incident.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             self.db.refresh(incident)
             return incident
@@ -119,7 +119,7 @@ class IncidentRepository:
         incident = self.get_by_id(incident_id)
         if incident:
             incident.user_id = user_id
-            incident.updated_at = datetime.utcnow()
+            incident.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             logger.info("incident_assigned", incident_id=incident_id, user_id=user_id)
             return True
@@ -348,7 +348,7 @@ class IncidentRepository:
         incident = self.get_by_id(incident_id)
         if incident:
             incident.embedding = embedding
-            incident.updated_at = datetime.utcnow()
+            incident.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             return True
         return False
@@ -398,7 +398,7 @@ class IncidentRepository:
         ).update(
             {
                 "user_id": user_id,
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
             },
             synchronize_session=False
         )
@@ -414,12 +414,12 @@ class IncidentRepository:
         """Bulk update incident outcomes."""
         update_data = {
             "outcome": outcome,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc),
         }
         if outcome_message:
             update_data["outcome_message"] = outcome_message
         if outcome == "success":
-            update_data["resolved_at"] = datetime.utcnow()
+            update_data["resolved_at"] = datetime.now(timezone.utc)
 
         result = self.db.query(IncidentTable).filter(
             IncidentTable.incident_id.in_(incident_ids)

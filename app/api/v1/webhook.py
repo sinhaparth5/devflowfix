@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException, status, Header, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 import structlog
@@ -336,7 +336,7 @@ async def receive_github_webhook(
     """
     Receive and process GitHub webhook events with path-based authentication.
     """
-    incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
+    incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
     
     logger.info(
         "github_webhook_received",
@@ -422,7 +422,7 @@ async def receive_github_webhook_sync(
     """
     Receive and process GitHub webhook events synchronously.
     """
-    incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
+    incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
     
     if x_github_event == "ping":
         return WebhookResponse(
@@ -484,7 +484,7 @@ async def receive_argocd_webhook(
     """
     Receive ArgoCD webhook events with path-based user identification.
     """
-    incident_id = f"argo_{int(datetime.utcnow().timestamp() * 1000)}"
+    incident_id = f"argo_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
     
     app_name = payload.get("application", {}).get("metadata", {}).get("name", "unknown")
     
@@ -542,7 +542,7 @@ async def receive_kubernetes_webhook(
     """
     Receive Kubernetes webhook events with path-based user identification.
     """
-    incident_id = f"k8s_{int(datetime.utcnow().timestamp() * 1000)}"
+    incident_id = f"k8s_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
     
     reason = payload.get("reason", "Unknown")
     
@@ -601,7 +601,7 @@ async def receive_generic_webhook(
     """
     Receive generic webhook events with path-based user identification.
     """
-    incident_id = f"gen_{int(datetime.utcnow().timestamp() * 1000)}"
+    incident_id = f"gen_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
     
     source_map = {
         "github": IncidentSource.GITHUB,
@@ -703,7 +703,7 @@ async def generate_my_webhook_secret(
     new_secret = generate_webhook_secret()
     
     user.github_webhook_secret = new_secret
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
     
@@ -729,7 +729,7 @@ async def generate_my_webhook_secret(
         "webhook_url": webhook_url,
         "secret_length": len(new_secret),
         "algorithm": "HMAC-SHA256",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "github_configuration": {
             "payload_url": webhook_url,
             "content_type": "application/json",
@@ -812,7 +812,7 @@ async def create_webhook_secret(
     new_secret = generate_webhook_secret()
     
     user.github_webhook_secret = new_secret
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
     
@@ -832,7 +832,7 @@ async def create_webhook_secret(
         "webhook_url": webhook_url,
         "secret_length": len(new_secret),
         "algorithm": "HMAC-SHA256",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "instructions": {
             "step_1": "Save this secret now - it will not be shown again",
             "step_2": f"Copy the webhook_secret value: {new_secret}",
@@ -1019,7 +1019,7 @@ async def test_my_webhook_signature(
   -H "Content-Type: application/json" \\
   -H "X-Hub-Signature-256: sha256={signature}" \\
   -H "X-GitHub-Event: workflow_run" \\
-  -H "X-GitHub-Delivery: test-{int(datetime.utcnow().timestamp())}" \\
+  -H "X-GitHub-Delivery: test-{int(datetime.now(timezone.utc).timestamp())}" \\
   --data '@payload.json' ''',
         },
         "verification": {
@@ -1027,7 +1027,7 @@ async def test_my_webhook_signature(
             "encoding": "hexadecimal",
             "constant_time_comparison": True,
         },
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1099,7 +1099,7 @@ async def test_webhook_signature(
   -H "X-GitHub-Event: workflow_run" \\
   --data '@payload.json' ''',
         },
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1116,7 +1116,7 @@ async def webhook_health() -> Dict[str, Any]:
     return {
         "status": "healthy",
         "endpoint": "webhook",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "features": {
             "github": True,
             "argocd": True,

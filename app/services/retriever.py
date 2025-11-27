@@ -1,8 +1,8 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 
 from app.core.models.incident import Incident
@@ -177,7 +177,7 @@ class RetrieverService:
             similarity_threshold=0.8,
         )
 
-        cutoff_time = datetime.utcnow() - timedelta(hours=time_window_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
 
         recent_similar = []
         for item in similar:
@@ -284,7 +284,7 @@ class RetrieverService:
         cutoff_date = None
         
         if max_age_days:
-            cutoff_date = datetime.utcnow() - timedelta(days=max_age_days)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         
         for incident_table, similarity in results:
             if cutoff_date and incident_table.created_at < cutoff_date:
@@ -340,20 +340,20 @@ class RetrieverService:
         
         results, timestamp = self._cache[key]
         
-        if datetime.utcnow() - timestamp > timedelta(seconds=self.cache_ttl_seconds):
+        if datetime.now(timezone.utc) - timestamp > timedelta(seconds=self.cache_ttl_seconds):
             del self._cache[key]
             return None
         
         return results
     
     def _set_cache(self, key: str, results: List[Dict]):
-        self._cache[key] = (results, datetime.utcnow())
+        self._cache[key] = (results, datetime.now(timezone.utc))
         
         if len(self._cache) > 1000:
             self._cleanup_cache()
     
     def _cleanup_cache(self):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_keys = [
             k for k, (_, ts) in self._cache.items()
             if now - ts > timedelta(seconds=self.cache_ttl_seconds)

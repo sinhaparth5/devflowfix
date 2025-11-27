@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 from app.domain.validators.base import BaseValidator, ValidationResult
@@ -100,7 +100,7 @@ class BlastRadiusValidator(BaseValidator):
             incident: Incident being remediated
         """
         service = incident.get_service_name() or "unknown"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         self._hourly_fixes[service].append(now)
         
@@ -128,7 +128,7 @@ class BlastRadiusValidator(BaseValidator):
         self._concurrent_executions = max(0, self._concurrent_executions - 1)
         
         if not success:
-            self._last_failure_times[service] = datetime.utcnow()
+            self._last_failure_times[service] = datetime.now(timezone.utc)
         
         logger.info(
             "blast_radius_execution_ended",
@@ -140,7 +140,7 @@ class BlastRadiusValidator(BaseValidator):
     
     def _cleanup_old_entries(self) -> None:
         """Remove tracking entries older than retention period."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         one_hour_ago = now - timedelta(hours=1)
         one_day_ago = now - timedelta(days=1)
         
@@ -166,7 +166,7 @@ class BlastRadiusValidator(BaseValidator):
         service = incident.get_service_name() or "unknown"
         max_per_hour = self.settings.max_fixes_per_hour
         
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
         recent_fixes = [
             ts for ts in self._hourly_fixes.get(service, [])
             if ts > one_hour_ago
@@ -198,7 +198,7 @@ class BlastRadiusValidator(BaseValidator):
         """Check if daily global limit would be exceeded."""
         max_per_day = self.settings.max_fixes_per_day
         
-        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        one_day_ago = datetime.now(timezone.utc) - timedelta(days=1)
         recent_fixes = [ts for ts in self._daily_fixes if ts > one_day_ago]
         
         current_count = len(recent_fixes)
@@ -271,7 +271,7 @@ class BlastRadiusValidator(BaseValidator):
         
         last_failure = self._last_failure_times[service]
         cooling_period = timedelta(minutes=15)  
-        time_since_failure = datetime.utcnow() - last_failure
+        time_since_failure = datetime.now(timezone.utc) - last_failure
         
         if time_since_failure < cooling_period:
             remaining = cooling_period - time_since_failure
@@ -299,7 +299,7 @@ class BlastRadiusValidator(BaseValidator):
         """
         service = incident.get_service_name() or "unknown"
         
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
         recent_fixes = [
             ts for ts in self._hourly_fixes.get(service, [])
             if ts > one_hour_ago
@@ -334,8 +334,8 @@ class BlastRadiusValidator(BaseValidator):
         """
         self._cleanup_old_entries()
         
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        one_day_ago = datetime.now(timezone.utc) - timedelta(days=1)
         
         return {
             "concurrent_executions": self._concurrent_executions,

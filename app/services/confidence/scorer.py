@@ -16,7 +16,7 @@ The scorer also applies adjustments based on:
 """
 
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 from app.core.enums import ConfidenceLevel, IncidentSource
 from app.core.schemas.analysis import ConfidenceBreakdown
@@ -264,7 +264,7 @@ class ConfidenceScorer:
         if not similar_incidents:
             return 0.0
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         recency_scores = []
         
         for incident in similar_incidents[:5]: 

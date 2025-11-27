@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 """
 Analyzer Service - Core AI-powered incident analysis with RAG.
@@ -15,7 +15,7 @@ This service:
 
 import time
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.models.incident import Incident
 from app.core.models.analysis import AnalysisResult
@@ -155,7 +155,7 @@ class AnalyzerService:
                 suggested_actions=analysis.get("suggested_actions", []),
                 warnings=analysis.get("warnings", []),
                 estimated_fix_duration_seconds=analysis.get("estimated_duration_seconds"),
-                analyzed_at=datetime.utcnow(),
+                analyzed_at=datetime.now(timezone.utc),
                 analysis_duration_ms=int((time.time() - start_time) * 1000),
             )
             
@@ -563,7 +563,7 @@ Be concise, accurate, and consider the similar incidents when available.
                 self._format_similar_incident(si)
                 for si in incident.similar_incidents
             ] if incident.similar_incidents else [],
-            analyzed_at=incident.updated_at or datetime.utcnow(),
+            analyzed_at=incident.updated_at or datetime.now(timezone.utc),
         )
     
     def _create_fallback_result(
@@ -582,7 +582,7 @@ Be concise, accurate, and consider the similar incidents when available.
                 "Manual investigation required",
                 f"Error: {error}",
             ],
-            analyzed_at=datetime.utcnow(),
+            analyzed_at=datetime.now(timezone.utc),
         )
     
     def _get_fallback_llm_response(self) -> str:

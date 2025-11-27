@@ -1,8 +1,8 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 import asyncio
 import structlog
@@ -13,7 +13,7 @@ from app.core.models.remediation import RemediationPlan, RemediationResult
 from app.core.models.context import ExecutionContext
 from app.core.enums import (
     IncidentSource, Severity, Outcome, Environment,
-    StrategyType, NotifcationType
+    StrategyType, NotificationType
 )
 from app.domain.strategies.base import DecisionResult
 from app.domain.strategies.factory import StrategyFactory
@@ -98,7 +98,7 @@ class EventProcessor:
         context: Optional[ExecutionContext] = None,
     ) -> ProcessingResult:
         
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         incident = None
         
         try:
@@ -112,7 +112,7 @@ class EventProcessor:
             
             if self.enable_notifications and self.notification_service:
                 await self._notify(
-                    NotifcationType.INCIDENT_DETECTED,
+                    NotificationType.INCIDENT_DETECTED,
                     incident,
                 )
             
@@ -128,7 +128,7 @@ class EventProcessor:
             
             if self.enable_notifications and self.notification_service:
                 await self._notify(
-                    NotifcationType.ANALYSIS_COMPLETE,
+                    NotificationType.ANALYSIS_COMPLETE,
                     incident,
                     analysis=analysis,
                 )
@@ -149,7 +149,7 @@ class EventProcessor:
             
             await self._finalize(incident, remediation_result)
             
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             
             return ProcessingResult(
                 incident_id=incident.incident_id,
@@ -177,7 +177,7 @@ class EventProcessor:
             if incident:
                 await self._handle_failure(incident, str(e))
             
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             
             return ProcessingResult(
                 incident_id=incident.incident_id if incident else "unknown",
@@ -242,7 +242,7 @@ class EventProcessor:
             error_message=payload.get("error_message"),
             context=self._extract_context(payload, source),
             raw_payload=payload,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         
         # Convert domain model to database model
@@ -405,7 +405,7 @@ class EventProcessor:
         
         if self.enable_notifications and self.notification_service:
             await self._notify(
-                NotifcationType.REMEDIATION_STARTED,
+                NotificationType.REMEDIATION_STARTED,
                 incident,
             )
         
@@ -420,9 +420,9 @@ class EventProcessor:
         
         if self.enable_notifications and self.notification_service:
             notification_type = (
-                NotifcationType.REMEDIATION_SUCCESS
+                NotificationType.REMEDIATION_SUCCESS
                 if result.success
-                else NotifcationType.REMEDIATION_FAILED
+                else NotificationType.REMEDIATION_FAILED
             )
             await self._notify(notification_type, incident, remediation_result=result)
         
@@ -468,7 +468,7 @@ class EventProcessor:
             await self.incident_repo.update(incident)
             outcome = Outcome.PENDING
         
-        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+        duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
         
         return ProcessingResult(
             incident_id=incident.incident_id,
@@ -490,7 +490,7 @@ class EventProcessor:
         
         await self._request_approval(incident, decision)
         
-        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+        duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
         
         return ProcessingResult(
             incident_id=incident.incident_id,
@@ -510,7 +510,7 @@ class EventProcessor:
     ):
         if self.enable_notifications and self.notification_service:
             await self._notify(
-                NotifcationType.APPROVAL_REQUESTED,
+                NotificationType.APPROVAL_REQUESTED,
                 incident,
                 decision=decision,
             )
@@ -531,7 +531,7 @@ class EventProcessor:
         
         if self.enable_notifications and self.notification_service:
             await self._notify(
-                NotifcationType.ESCALATION,
+                NotificationType.ESCALATION,
                 incident,
                 decision=decision,
             )
@@ -556,14 +556,14 @@ class EventProcessor:
         
         if self.enable_notifications and self.notification_service:
             await self._notify(
-                NotifcationType.SYSTEM_ERROR,
+                NotificationType.SYSTEM_ERROR,
                 incident,
                 error=error,
             )
     
     async def _notify(
         self,
-        notification_type: NotifcationType,
+        notification_type: NotificationType,
         incident: Incident,
         **kwargs,
     ):

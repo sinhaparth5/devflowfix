@@ -9,7 +9,7 @@ import hmac
 import hashlib
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 API_BASE_URL = 'http://localhost:8000'
 # Read secret from environment or use default
@@ -62,7 +62,7 @@ def send_test_webhook():
             'conclusion': 'failure',
             'head_branch': 'main',
             'html_url': 'https://github.com/Shine-5705/DevflowFix-tester/actions/runs/99999',
-            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'created_at': datetime.now(timezone.utc).isoformat() + 'Z',
             'status': 'completed',
             'event': 'push'
         },

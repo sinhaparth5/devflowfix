@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func, text, and_, or_
 from sqlalchemy.orm import Session
 import structlog
@@ -30,7 +30,7 @@ class VectorRepository:
                 raise ValueError(f"Incident not found: {incident_id}")
             
             incident.embedding = embedding
-            incident.updated_at = datetime.utcnow()
+            incident.updated_at = datetime.now(timezone.utc)
 
             self.session.commit()
 
@@ -184,7 +184,7 @@ class VectorRepository:
             similarity_threshold: float = 0.7,
     ) -> List[Tuple[IncidentTable, float]]:
         try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
             query = self.session.query(
                 IncidentTable,
@@ -253,7 +253,7 @@ class VectorRepository:
 
                 if incident:
                     incident.embedding = embedding
-                    incident.updated_at = datetime.utcnow()
+                    incident.updated_at = datetime.now(timezone.utc)
                     success_count += 1
                 else:
                     failed_count += 1
@@ -400,7 +400,7 @@ class VectorRepository:
                 return False
             
             incident.embedding = None
-            incident.updated_at = datetime.utcnow()
+            incident.updated_at = datetime.now(timezone.utc)
 
             self.session.commit()
 
@@ -418,7 +418,7 @@ class VectorRepository:
             count = self.session.query(IncidentTable).filter(
                 IncidentTable.embedding.isnot(None)
             ).update(
-                {IncidentTable.embedding: None, IncidentTable.updated_at: datetime.utcnow()},
+                {IncidentTable.embedding: None, IncidentTable.updated_at: datetime.now(timezone.utc)},
                 synchronize_session=False
             )
 

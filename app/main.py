@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -164,7 +164,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "message": "Request validation failed",
             "errors": exc.errors(),
             "request_id": request_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -201,7 +201,7 @@ async def devflowfix_exception_handler(request: Request, exc: DevFlowFixExceptio
         content={
             **exc.to_dict(),
             "request_id": request_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -226,7 +226,7 @@ async def general_exception_handler(request: Request, exc: Exception):
             "error": "internal_error",
             "message": detail,
             "request_id": request_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -240,7 +240,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def health_check():
     return HealthResponse(
         status="healthy",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         version=settings.version,
     )
 
@@ -280,7 +280,7 @@ async def readiness_check():
         status_code=status_code,
         content={
             "status": health_status,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "version": settings.version,
             **components,
         },

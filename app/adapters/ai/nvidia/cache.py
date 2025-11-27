@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import pickle
 import structlog
 
@@ -82,7 +82,7 @@ class MemoryEmbeddingCache(EmbeddingCache):
         embedding, expires_at = self.cache[key]
         
         # Check expiry
-        if expires_at and datetime.utcnow() > expires_at:
+        if expires_at and datetime.now(timezone.utc) > expires_at:
             del self.cache[key]
             return None
         
@@ -104,7 +104,7 @@ class MemoryEmbeddingCache(EmbeddingCache):
         
         expires_at = None
         if ttl:
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
         
         self.cache[key] = (embedding, expires_at)
     

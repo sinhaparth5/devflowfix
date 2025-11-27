@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from uuid import uuid4
 import secrets
@@ -107,7 +107,7 @@ class AuthService:
         if expires_delta is None:
             expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expire = now + expires_delta
 
         claims = {
@@ -137,7 +137,7 @@ class AuthService:
         if expires_delta is None:
             expires_delta = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expire = now + expires_delta
 
         claims = {
@@ -294,8 +294,8 @@ class AuthService:
             role="user",
             is_active=True,
             is_verified=False,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         user = self.user_repo.create(user)
@@ -342,8 +342,8 @@ class AuthService:
             raise AuthenticationError("Invalid email or password", "invalid_credentials")
 
         # Check account lockout
-        if user.locked_until and user.locked_until > datetime.utcnow():
-            remaining = (user.locked_until - datetime.utcnow()).seconds // 60
+        if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+            remaining = (user.locked_until - datetime.now(timezone.utc)).seconds // 60
             self._log_audit(
                 user_id=user.user_id,
                 action="login",
@@ -362,7 +362,7 @@ class AuthService:
             failed_attempts = self.user_repo.increment_failed_login(user.user_id)
 
             if failed_attempts >= MAX_FAILED_LOGIN_ATTEMPTS:
-                lockout_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+                lockout_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
                 self.user_repo.lock_user(user.user_id, lockout_until)
                 logger.warning("account_locked", user_id=user.user_id)
 
@@ -449,9 +449,9 @@ class AuthService:
             user_agent=user_agent,
             is_active=True,
             is_revoked=False,
-            created_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+            created_at=datetime.now(timezone.utc),
+            last_used_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
         )
 
         return self.session_repo.create(session)
@@ -479,7 +479,7 @@ class AuthService:
         session = self.session_repo.get_by_id(session_id)
         if session:
             session.refresh_token_hash = new_refresh_hash
-            session.last_used_at = datetime.utcnow()
+            session.last_used_at = datetime.now(timezone.utc)
             self.session_repo.db.commit()
 
         self._log_audit(
@@ -673,7 +673,7 @@ class AuthService:
         if not ip_address:
             return
 
-        since = datetime.utcnow() - timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        since = datetime.now(timezone.utc) - timedelta(minutes=LOCKOUT_DURATION_MINUTES)
         failed_count = self.audit_repo.count_failed_logins(ip_address, since)
 
         if failed_count >= MAX_FAILED_LOGIN_ATTEMPTS * 3:  # 3x user limit
@@ -705,7 +705,7 @@ class AuthService:
                 success=success,
                 error_message=error_message,
                 details=details or {},
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             )
             self.audit_repo.create(log)
         except Exception as e:
@@ -725,8 +725,8 @@ class AuthService:
             "sub": user.user_id,
             "email": user.email,
             "type": "password_reset",
-            "exp": int((datetime.utcnow() + timedelta(hours=1)).timestamp()),
-            "iat": int(datetime.utcnow().timestamp()),
+            "exp": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
             "jti": str(uuid4()),
         }
 

@@ -4,7 +4,7 @@
 """Repository for remediation history CRUD operations."""
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_
 
@@ -379,7 +379,7 @@ class RemediationHistoryRepository:
         Returns:
             List of recent RemediationHistoryTable objects
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         stmt = (
             select(RemediationHistoryTable)

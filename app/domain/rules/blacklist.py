@@ -125,7 +125,7 @@ class BlacklistRule(BaseRule):
             (FailureType.MISSING_SECRET.value, RemediationActionType.K8S_RESTART_POD.value),
             (FailureType.MISSING_SECRET.value, RemediationActionType.ARGOCD_SYNC.value),
             
-            (FailureType.DISK_FULL.value, RemediationActionType.K8S_DELETE_EVICETED_PODS.value),
+            (FailureType.DISK_FULL.value, RemediationActionType.K8S_DELETE_EVICTED_PODS.value),
             
             (FailureType.BUILD_FAILURE.value, RemediationActionType.K8S_RESTART_POD.value),
             (FailureType.TEST_FAILURE.value, RemediationActionType.K8S_RESTART_POD.value),

@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import structlog
 
@@ -36,7 +36,7 @@ class KubernetesPodEvent(BaseEvent):
         """Initialize and parse after dataclass creation."""
         self.source = IncidentSource.KUBERNETES
         if not self.timestamp:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
         self.parse()
     
     def parse(self) -> None:
@@ -58,7 +58,7 @@ class KubernetesPodEvent(BaseEvent):
             
             # Event metadata
             metadata = self.raw_payload.get("metadata", {})
-            self.event_id = metadata.get("uid", f"k8s_{self.pod_name}_{int(datetime.utcnow().timestamp())}")
+            self.event_id = metadata.get("uid", f"k8s_{self.pod_name}_{int(datetime.now(timezone.utc).timestamp())}")
             
             # Event details
             self.reason = self.raw_payload.get("reason")

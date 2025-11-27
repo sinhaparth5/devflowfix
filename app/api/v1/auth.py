@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -718,7 +718,7 @@ async def create_api_key(
     return APIKeyCreateResponse(
         api_key=api_key,
         prefix=prefix,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
 
 

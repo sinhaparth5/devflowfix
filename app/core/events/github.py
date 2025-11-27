@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import structlog
 
@@ -44,7 +44,7 @@ class GitHubWorkflowEvent(BaseEvent):
         """Initialize and parse after dataclass creation."""
         self.source = IncidentSource.GITHUB
         if not self.timestamp:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
         self.parse()
     
     def parse(self) -> None:
@@ -172,7 +172,7 @@ class GitHubWorkflowEvent(BaseEvent):
             # GitHub uses ISO 8601 format: 2024-01-01T12:00:00Z
             return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
         except Exception:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
     
     def is_failure_event(self) -> bool:
         """
@@ -252,7 +252,7 @@ class GitHubWorkflowFailedEvent(GitHubWorkflowEvent):
         self.event_type = EventType.GITHUB_WORKFLOW_FAILED
         self.source = IncidentSource.GITHUB
         if not self.timestamp:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
         self.parse()
         
         # Override to ensure it's marked as failure
@@ -282,7 +282,7 @@ class GitHubWorkflowJobEvent(BaseEvent):
         self.source = IncidentSource.GITHUB
         self.event_type = EventType.GITHUB_WORKFLOW_FAILED
         if not self.timestamp:
-            self.timestamp = datetime.utcnow()
+            self.timestamp = datetime.now(timezone.utc)
         self.parse()
     
     def parse(self) -> None:

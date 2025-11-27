@@ -12,7 +12,7 @@ Sends interactive approval requests to Slack with:
 """
 
 from typing import Optional, Dict, Any, Callable, Awaitable
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import hashlib
 import hmac
 
@@ -119,7 +119,7 @@ class SlackApprovalAdapter:
         Returns:
             Slack API response with message timestamp
         """
-        timeout_at = datetime.utcnow() + timedelta(minutes=timeout_minutes)
+        timeout_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
         
         # Build interactive message blocks
         blocks = self._build_approval_blocks(
@@ -152,7 +152,7 @@ class SlackApprovalAdapter:
                 "plan": plan,
                 "message_ts": message_ts,
                 "channel": self.approvals_channel,
-                "requested_at": datetime.utcnow(),
+                "requested_at": datetime.now(timezone.utc),
                 "timeout_at": timeout_at,
                 "requestor": requestor,
             }
@@ -460,7 +460,7 @@ class SlackApprovalAdapter:
             raise ValueError(f"No pending approval found for incident: {incident_id}")
         
         # Check timeout
-        if datetime.utcnow() > approval_data["timeout_at"]:
+        if datetime.now(timezone.utc) > approval_data["timeout_at"]:
             logger.warning(
                 "slack_approval_timeout",
                 incident_id=incident_id,
@@ -492,7 +492,7 @@ class SlackApprovalAdapter:
             incident_id=incident_id,
             approval_status=approval_status,
             approver=approver,
-            approved_at=datetime.utcnow(),
+            approved_at=datetime.now(timezone.utc),
             message=f"Remediation {'approved' if approved else 'rejected'} by {approver}",
             executed=False,
         )
@@ -585,7 +585,7 @@ class SlackApprovalAdapter:
                     },
                     {
                         "type": "mrkdwn",
-                        "text": f"*Decided At:*\n<!date^{int(datetime.utcnow().timestamp())}^{{date_short_pretty}} {{time}}|{datetime.utcnow().isoformat()}>"
+                        "text": f"*Decided At:*\n<!date^{int(datetime.now(timezone.utc).timestamp())}^{{date_short_pretty}} {{time}}|{datetime.now(timezone.utc).isoformat()}>"
                     },
                 ]
             },

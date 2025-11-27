@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 from enum import Enum
 
@@ -94,8 +94,8 @@ class RemediationActionType(str, Enum):
     K8S_SCALE_DEPLOYMENT = "k8s_scale_deployment"
     K8S_UPDATE_IMAGE = "k8s_update_image"
     K8S_ROLLBACK_DEPLOYMENT = "k8s_rollback_deployment"
-    K8S_DELETE_EVICETED_PODS = "k8s_delete_evicted_pods"
-    K8S_UPDATE_RESOURCE_LIMITS = "k8s_update_resouce_limits"
+    K8S_DELETE_EVICTED_PODS = "k8s_delete_evicted_pods"
+    K8S_UPDATE_RESOURCE_LIMITS = "k8s_update_resource_limits"
     K8S_UPDATE_SECRET = "k8s_update_secret"
 
     # ArgoCD
@@ -163,7 +163,7 @@ class ValidationStatus(str, Enum):
     SKIPPED = "skipped"
     WARNING = "warning"
 
-class NotifcationType(str, Enum):
+class NotificationType(str, Enum):
     """ Type of notification to send. """
     INCIDENT_DETECTED = "incident_detected"
     ANALYSIS_COMPLETE = "analysis_complete"
@@ -202,7 +202,7 @@ class MetricType(str, Enum):
     """ Types of metrics tracked. """
     INCIDENT_COUNT = "incident_count"
     REMEDIATION_SUCCESS_RATE = "remediation_success_rate"
-    AVERATE_RESOLUTION_TIME = "averate_resolution_time"
+    AVERAGE_RESOLUTION_TIME = "average_resolution_time"
     CONFIDENCE_DISTRIBUTION = "confidence_distribution"
     FALSE_POSITIVE_RATE = "false_positive_rate"
     COST_PER_INCIDENT = "cost_per_incident"

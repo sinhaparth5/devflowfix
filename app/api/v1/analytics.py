@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 import structlog
@@ -442,7 +442,7 @@ async def get_analytics_overview(
 ) -> Dict[str, Any]:
     analytics_repo = AnalyticsRepository(db)
     
-    start_date = datetime.utcnow() - timedelta(days=days)
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
     
     try:
         stats = analytics_repo.get_incident_stats(start_date=start_date)
@@ -458,7 +458,7 @@ async def get_analytics_overview(
         return {
             "period": {
                 "start_date": start_date.isoformat(),
-                "end_date": datetime.utcnow().isoformat(),
+                "end_date": datetime.now(timezone.utc).isoformat(),
                 "days": days,
             },
             "summary": stats,
@@ -474,7 +474,7 @@ async def get_analytics_overview(
             },
             "top_failure_types": top_failures,
             "hourly_distribution": hourly,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         
     except Exception as e:

@@ -65,7 +65,7 @@ class PreRemediationValidator(BaseValidator):
             (FailureType.MISSING_SECRET.value, RemediationActionType.ARGOCD_SYNC.value),
             
             # Disk issues - evicting pods won't help
-            (FailureType.DISK_FULL.value, RemediationActionType.K8S_DELETE_EVICETED_PODS.value),
+            (FailureType.DISK_FULL.value, RemediationActionType.K8S_DELETE_EVICTED_PODS.value),
             
             # Build/code issues - need code changes, not pod operations
             (FailureType.BUILD_FAILURE.value, RemediationActionType.K8S_RESTART_POD.value),

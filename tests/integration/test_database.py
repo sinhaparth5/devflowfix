@@ -1,8 +1,8 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -50,9 +50,9 @@ def test_session(test_engine):
 def sample_incident_data():
     return {
         "incident_id": "inc_test123",
-        "timestamp": datetime.utcnow(),
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "timestamp": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
         "source": IncidentSource.GITHUB.value,
         "severity": Severity.HIGH.value,
         "failure_type": FailureType.BUILD_FAILURE.value,
@@ -115,7 +115,7 @@ class TestIncidentTableCRUD:
         sample_incident_table.outcome = Outcome.SUCCESS.value
         sample_incident_table.root_cause = "Transient network error"
         sample_incident_table.confidence = 0.92
-        sample_incident_table.updated_at = datetime.utcnow()
+        sample_incident_table.updated_at = datetime.now(timezone.utc)
         
         test_session.commit()
         test_session.refresh(sample_incident_table)
@@ -132,9 +132,9 @@ class TestIncidentTableCRUD:
         for i in range(5):
             incident = IncidentTable(
                 incident_id=f"inc_list_{i}",
-                timestamp=datetime.utcnow(),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 source=IncidentSource.GITHUB.value,
                 severity=Severity.MEDIUM.value,
                 error_log=f"Error {i}",
@@ -153,9 +153,9 @@ class TestIncidentTableCRUD:
     def test_list_incidents_with_filter(self, test_session):
         incident1 = IncidentTable(
             incident_id="inc_filter_1",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.GITHUB.value,
             severity=Severity.CRITICAL.value,
             error_log="Critical error",
@@ -166,9 +166,9 @@ class TestIncidentTableCRUD:
         )
         incident2 = IncidentTable(
             incident_id="inc_filter_2",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.KUBERNETES.value,
             severity=Severity.LOW.value,
             error_log="Low error",
@@ -193,9 +193,9 @@ class TestIncidentTableCRUD:
         for i in range(3):
             incident = IncidentTable(
                 incident_id=f"inc_count_{i}",
-                timestamp=datetime.utcnow(),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 source=IncidentSource.GITHUB.value,
                 severity=Severity.MEDIUM.value,
                 error_log=f"Error {i}",
@@ -227,9 +227,9 @@ class TestIncidentTableCRUD:
     def test_incident_with_outcome(self, test_session):
         incident = IncidentTable(
             incident_id="inc_outcome_test",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.GITHUB.value,
             severity=Severity.HIGH.value,
             error_log="Test error",
@@ -253,7 +253,7 @@ class TestIncidentTableCRUD:
     
     def test_incident_approval(self, test_session, sample_incident_table):
         sample_incident_table.approved_by = "test_user"
-        sample_incident_table.approval_timestamp = datetime.utcnow()
+        sample_incident_table.approval_timestamp = datetime.now(timezone.utc)
         test_session.commit()
         
         result = test_session.query(IncidentTable).filter(
@@ -275,7 +275,7 @@ class TestFeedbackTable:
             user="testuser",
             user_email="test@example.com",
             rating=5,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         test_session.add(feedback)
         test_session.commit()
@@ -294,7 +294,7 @@ class TestFeedbackTable:
             incident_id=sample_incident_table.incident_id,
             helpful=False,
             comment="Didn't work",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         test_session.add(feedback)
         test_session.commit()
@@ -315,7 +315,7 @@ class TestRemediationHistoryTable:
             incident_id=sample_incident_table.incident_id,
             attempt_number=1,
             action_type="github_rerun_workflow",
-            executed_at=datetime.utcnow(),
+            executed_at=datetime.now(timezone.utc),
             duration_seconds=45,
             success=True,
             outcome=Outcome.SUCCESS.value,
@@ -346,7 +346,7 @@ class TestRemediationHistoryTable:
                 incident_id=sample_incident_table.incident_id,
                 attempt_number=i + 1,
                 action_type="k8s_restart_pod",
-                executed_at=datetime.utcnow(),
+                executed_at=datetime.now(timezone.utc),
                 success=i == 2,
                 outcome=Outcome.SUCCESS.value if i == 2 else Outcome.FAILED.value,
                 environment="dev",
@@ -378,7 +378,7 @@ class TestMetricTable:
             value=42.0,
             unit="count",
             labels={"source": "github"},
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         test_session.add(metric)
         test_session.commit()
@@ -400,7 +400,7 @@ class TestMetricTable:
                 value=100.0 + i * 10,
                 unit="ms",
                 labels={},
-                timestamp=datetime.utcnow() - timedelta(minutes=i),
+                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
             )
             test_session.add(metric)
         test_session.commit()
@@ -421,8 +421,8 @@ class TestConfigTable:
             value_type="int",
             description="Maximum retry attempts",
             category="remediation",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             is_secret=False,
             is_system=True,
         )
@@ -442,8 +442,8 @@ class TestConfigTable:
             config_key="timeout_seconds",
             config_value="30",
             value_type="int",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             is_secret=False,
             is_system=False,
         )
@@ -451,7 +451,7 @@ class TestConfigTable:
         test_session.commit()
         
         config.config_value = "60"
-        config.updated_at = datetime.utcnow()
+        config.updated_at = datetime.now(timezone.utc)
         config.updated_by = "admin"
         test_session.commit()
         
@@ -470,9 +470,9 @@ class TestAnalyticsQueries:
         for i in range(10):
             incident = IncidentTable(
                 incident_id=f"inc_analytics_{i}",
-                timestamp=datetime.utcnow() - timedelta(days=i),
-                created_at=datetime.utcnow() - timedelta(days=i),
-                updated_at=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
+                created_at=datetime.now(timezone.utc) - timedelta(days=i),
+                updated_at=datetime.now(timezone.utc),
                 source=IncidentSource.GITHUB.value if i % 2 == 0 else IncidentSource.KUBERNETES.value,
                 severity=Severity.HIGH.value if i % 3 == 0 else Severity.MEDIUM.value,
                 failure_type=FailureType.BUILD_FAILURE.value,
@@ -541,7 +541,7 @@ class TestAnalyticsQueries:
         assert success_rate == 50.0
     
     def test_filter_by_date_range(self, populated_db):
-        start_date = datetime.utcnow() - timedelta(days=5)
+        start_date = datetime.now(timezone.utc) - timedelta(days=5)
         
         results = populated_db.query(IncidentTable).filter(
             IncidentTable.created_at >= start_date
@@ -559,9 +559,9 @@ class TestVectorOperations:
         
         incident = IncidentTable(
             incident_id="inc_embed_test",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.GITHUB.value,
             severity=Severity.HIGH.value,
             error_log="Test error",
@@ -584,9 +584,9 @@ class TestVectorOperations:
     def test_check_has_embedding(self, test_session):
         incident_with = IncidentTable(
             incident_id="inc_with_embed",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.GITHUB.value,
             severity=Severity.HIGH.value,
             error_log="Test",
@@ -598,9 +598,9 @@ class TestVectorOperations:
         )
         incident_without = IncidentTable(
             incident_id="inc_without_embed",
-            timestamp=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             source=IncidentSource.GITHUB.value,
             severity=Severity.HIGH.value,
             error_log="Test",
@@ -629,9 +629,9 @@ class TestVectorOperations:
         for i in range(3):
             incident = IncidentTable(
                 incident_id=f"inc_no_embed_{i}",
-                timestamp=datetime.utcnow(),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 source=IncidentSource.GITHUB.value,
                 severity=Severity.MEDIUM.value,
                 error_log=f"Error {i}",

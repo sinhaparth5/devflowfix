@@ -4,7 +4,7 @@
 """Repository for feedback CRUD operations."""
 
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
@@ -260,7 +260,7 @@ class FeedbackRepository:
         Returns:
             List of recent FeedbackTable objects
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         
         stmt = (
             select(FeedbackTable)

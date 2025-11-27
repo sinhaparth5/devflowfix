@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 """
 Integration Tests for Slack Integration
@@ -12,7 +12,7 @@ Tests the complete Slack workflow:
 
 import asyncio
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 from unittest.mock import Mock, AsyncMock, patch
 
@@ -67,7 +67,7 @@ def low_confidence_incident():
     """Create low confidence incident for testing."""
     return Incident(
         incident_id="inc_low_conf_001",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         source=IncidentSource.GITHUB,
         severity=Severity.MEDIUM,
         failure_type=FailureType.BUILD_FAILURE,
@@ -90,7 +90,7 @@ def high_confidence_incident():
     """Create high confidence incident for testing."""
     return Incident(
         incident_id="inc_high_conf_001",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         source=IncidentSource.GITHUB,
         severity=Severity.LOW,
         failure_type=FailureType.TEST_FAILURE,
@@ -419,7 +419,7 @@ async def test_complete_slack_integration_flow(
         execution_log.append({
             "incident_id": incident_id,
             "approver": approver,
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         })
         return {"success": True, "message": "Remediation completed"}
     

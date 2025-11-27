@@ -2,7 +2,7 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Dict, Any, Optional, Type
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 
 from app.core.events.base import BaseEvent, GenericEvent, EventType
@@ -172,7 +172,7 @@ class EventFactory:
             event = GitHubWorkflowEvent(
                 event_type=EventType.GITHUB_WORKFLOW_FAILED,
                 source=IncidentSource.GITHUB,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 raw_payload=payload,
                 delivery_id=delivery_id,
             )
@@ -182,7 +182,7 @@ class EventFactory:
                 event = GitHubWorkflowFailedEvent(
                     event_type=EventType.GITHUB_WORKFLOW_FAILED,
                     source=IncidentSource.GITHUB,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     raw_payload=payload,
                     delivery_id=delivery_id,
                 )
@@ -193,7 +193,7 @@ class EventFactory:
             return GitHubWorkflowJobEvent(
                 event_type=EventType.GITHUB_WORKFLOW_FAILED,
                 source=IncidentSource.GITHUB,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 raw_payload=payload,
                 delivery_id=delivery_id,
             )
@@ -208,7 +208,7 @@ class EventFactory:
             return GenericEvent(
                 event_type=EventType.GENERIC,
                 source=IncidentSource.GITHUB,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 raw_payload=payload,
                 delivery_id=delivery_id,
             )
@@ -231,7 +231,7 @@ class EventFactory:
         return ArgoCDSyncEvent(
             event_type=EventType.ARGOCD_SYNC_FAILED,
             source=IncidentSource.ARGOCD,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             raw_payload=payload,
         )
     
@@ -253,7 +253,7 @@ class EventFactory:
         return KubernetesPodEvent(
             event_type=EventType.KUBERNETES_POD_FAILED,
             source=IncidentSource.KUBERNETES,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             raw_payload=payload,
         )
     
@@ -277,7 +277,7 @@ class EventFactory:
         return GenericEvent(
             event_type=EventType.GENERIC,
             source=IncidentSource.MANUAL,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             raw_payload=payload,
         )
     

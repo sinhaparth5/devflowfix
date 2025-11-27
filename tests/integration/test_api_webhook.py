@@ -1,8 +1,8 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import FastAPI, Depends, Header, BackgroundTasks
@@ -87,7 +87,7 @@ def app(mock_event_processor):
         x_github_delivery: Optional[str] = Header(None),
         x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
     ):
-        incident_id = f"gh_{x_github_delivery or int(datetime.utcnow().timestamp() * 1000)}"
+        incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
         body = await request.body()
         
         if x_github_event == "ping":
@@ -132,7 +132,7 @@ def app(mock_event_processor):
         background_tasks: BackgroundTasks,
     ):
         payload = await request.json()
-        incident_id = f"argo_{int(datetime.utcnow().timestamp() * 1000)}"
+        incident_id = f"argo_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         
         if not is_argocd_failure(payload):
             return WebhookResponse(
@@ -155,7 +155,7 @@ def app(mock_event_processor):
         background_tasks: BackgroundTasks,
     ):
         payload = await request.json()
-        incident_id = f"k8s_{int(datetime.utcnow().timestamp() * 1000)}"
+        incident_id = f"k8s_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         
         if not is_k8s_failure(payload):
             return WebhookResponse(
@@ -179,7 +179,7 @@ def app(mock_event_processor):
         x_webhook_source: Optional[str] = Header(None),
     ):
         payload = await request.json()
-        incident_id = f"gen_{int(datetime.utcnow().timestamp() * 1000)}"
+        incident_id = f"gen_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         
         if not payload.get("error_log") and not payload.get("message"):
             return WebhookResponse(
@@ -200,7 +200,7 @@ def app(mock_event_processor):
     async def webhook_health():
         return {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "features": {
                 "github": True,
                 "argocd": True,
