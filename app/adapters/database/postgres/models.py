@@ -193,10 +193,10 @@ class IncidentTable(SQLModel, table=True):
     fixability: Optional[str] = Field(default=None, max_length=20)
     confidence: Optional[float] = Field(default=None, index=True)
 
-    # Vector Embedding for RAG (768 dimensions for typical embedding models)
+    # Vector Embedding for RAG (4096 dimensions for nvidia/nv-embed-v1)
     embedding: Optional[list] = Field(
         default=None,
-        sa_column=Column(Vector(768))
+        sa_column=Column(Vector(4096))
     )
 
     # Similar Incidents (stored as JSON)
