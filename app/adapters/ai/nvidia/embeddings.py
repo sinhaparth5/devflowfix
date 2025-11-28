@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 import structlog
 
 from app.adapters.ai.nvidia.client import NVIDIAEmbeddingClient
-from app.adapters.ai.nvidia.cache import EmbeddingCache
+from app.adapters.ai.nvidia.cache import EmbeddingCache, create_cache
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +32,7 @@ class EmbeddingAdapter:
             batch_size: Maximum batch size for embedding requests
         """
         self.client = NVIDIAEmbeddingClient(model=model)
-        self.cache = cache or EmbeddingCache()
+        self.cache = cache or create_cache()  # Use factory to create proper cache
         self.batch_size = batch_size
         
         logger.info(

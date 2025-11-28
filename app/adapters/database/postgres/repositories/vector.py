@@ -77,6 +77,9 @@ class VectorRepository:
                 query = query.filter(IncidentTable.severity == severity_filter.value)
 
             if exclude_incident_id:
+                query = query.filter(IncidentTable.incident_id != exclude_incident_id)
+            
+            if only_with_outcome:
                 query = query.filter(IncidentTable.outcome.isnot(None))
 
             query = query.order_by(text('similarity DESC')).limit(top_k)

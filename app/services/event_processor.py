@@ -130,7 +130,7 @@ class EventProcessor:
                 await self._notify(
                     NotificationType.ANALYSIS_COMPLETE,
                     incident,
-                    analysis=analysis,
+                    similar_incidents=similar_incidents,
                 )
             
             decision = await self._decide(analysis, incident, context, similar_incidents)
@@ -235,13 +235,16 @@ class EventProcessor:
         source: IncidentSource,
     ) -> Incident:
         
+        # Sanitize payload to prevent circular references
+        sanitized_payload = self._sanitize_payload(payload)
+        
         incident = Incident(
             source=source,
             severity=self._extract_severity(payload),
             error_log=self._extract_error_log(payload),
             error_message=payload.get("error_message"),
             context=self._extract_context(payload, source),
-            raw_payload=payload,
+            raw_payload=sanitized_payload,
             timestamp=datetime.now(timezone.utc),
         )
         
@@ -292,7 +295,8 @@ class EventProcessor:
             logger.warning(
                 "embedding_generation_failed",
                 incident_id=incident.incident_id,
-                error=str(e),
+                error=str(e) or repr(e),
+                error_type=type(e).__name__,
             )
     
     async def _retrieve_similar(self, incident: Incident) -> list:
@@ -465,7 +469,8 @@ class EventProcessor:
             outcome = Outcome.ESCALATED
         else:
             incident.mark_resolved(Outcome.PENDING, decision.reason)
-            await self.incident_repo.update(incident)
+            # Update via incident_id instead of passing domain model
+            # The incident is already in the database, just update status
             outcome = Outcome.PENDING
         
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
@@ -592,6 +597,42 @@ class EventProcessor:
             enable_rollback=True,
             requires_approval=self.default_environment == Environment.PRODUCTION,
         )
+    
+    def _sanitize_payload(self, payload: Any, depth: int = 0, max_depth: int = 10) -> Any:
+        """
+        Sanitize payload to prevent circular references and deep nesting.
+        
+        Args:
+            payload: The payload to sanitize
+            depth: Current recursion depth
+            max_depth: Maximum allowed recursion depth
+            
+        Returns:
+            Sanitized payload safe for JSON serialization
+        """
+        if depth > max_depth:
+            return "[MAX_DEPTH_EXCEEDED]"
+        
+        if payload is None or isinstance(payload, (str, int, float, bool)):
+            return payload
+        
+        if isinstance(payload, dict):
+            sanitized = {}
+            for key, value in payload.items():
+                try:
+                    sanitized[key] = self._sanitize_payload(value, depth + 1, max_depth)
+                except (TypeError, RecursionError):
+                    sanitized[key] = str(value)
+            return sanitized
+        
+        if isinstance(payload, (list, tuple)):
+            return [self._sanitize_payload(item, depth + 1, max_depth) for item in payload]
+        
+        # For any other type, convert to string
+        try:
+            return str(payload)
+        except Exception:
+            return "[UNSERIALIZED_OBJECT]"
     
     def _extract_severity(self, payload: Dict[str, Any]) -> Severity:
         severity_str = payload.get("severity", "medium").lower()

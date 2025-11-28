@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
-# DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
+# DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 from typing import Optional, Dict, Any, List
 import httpx
@@ -217,7 +217,7 @@ class NVIDIAClient:
 
 class NVIDIALLMClient(NVIDIAClient):
     """
-    Specialezed client for NVIDIA LLM API
+    Specialized client for NVIDIA LLM API
 
     Handles completions and chat requests.
     """
@@ -255,7 +255,7 @@ class NVIDIALLMClient(NVIDIAClient):
         """
         payload = {
             "model": self.model,
-            "message": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": temperature,
             **kwargs,
@@ -269,6 +269,7 @@ class NVIDIALLMClient(NVIDIAClient):
             temperature=temperature
         )
 
+        # NVIDIA API uses standard OpenAI-compatible endpoint
         response = await self.post("/chat/completions", payload)
 
         usage = response.get("usage", {})
