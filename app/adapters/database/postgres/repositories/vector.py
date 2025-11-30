@@ -89,7 +89,7 @@ class VectorRepository:
             similar_incidents = [
                 (incident, float(similarity))
                 for incident, similarity in results
-                if similarity >= similarity_threshold
+                if float(similarity) >= similarity_threshold
             ]
 
             logger.info(
@@ -122,7 +122,8 @@ class VectorRepository:
         if not incident:
             raise ValueError(f"Incident not found: {incident_id}")
         
-        if not incident.embedding:
+        # Check if embedding is None or empty (handle array-like embeddings)
+        if incident.embedding is None or (isinstance(incident.embedding, (list, tuple)) and len(incident.embedding) == 0):
             raise ValueError(f"Incident has no embedding {incident_id}")
         
         return self.search_similar(
@@ -164,7 +165,7 @@ class VectorRepository:
             similar_incidents = [
                 (incident, float(similarity))
                 for incident, similarity in results
-                if similarity >= min_similarity
+                if float(similarity) >= min_similarity
             ]
 
             logger.info(
@@ -204,7 +205,7 @@ class VectorRepository:
             return [
                 (incident, float(similarity))
                 for incident, similarity in results
-                if similarity >= similarity_threshold
+                if float(similarity) >= similarity_threshold
             ]
         
         except Exception as e:

@@ -47,6 +47,7 @@ class EmbeddingAdapter:
         text: str,
         input_type: str = "query",
         use_cache: bool = True,
+        max_length: int = 3000,
     ) -> List[float]:
         """
         Generate embedding for single text.
@@ -55,10 +56,25 @@ class EmbeddingAdapter:
             text: Text to embed
             input_type: "query" or "passage"
             use_cache: Whether to use cache
+            max_length: Maximum text length before truncation (default 3000 chars)
             
         Returns:
             Embedding vector
         """
+        # Truncate text if it exceeds max length to avoid token limit errors
+        if len(text) > max_length:
+            logger.warning(
+                "embedding_text_truncated",
+                original_length=len(text),
+                truncated_length=max_length,
+                input_type=input_type,
+            )
+            # Keep the most important parts: beginning and end
+            # Since error logs often have the root cause at the end
+            beginning = text[:max_length // 2]
+            end = text[-(max_length // 2):]
+            text = f"{beginning}\n...[truncated]...\n{end}"
+        
         # Check cache first
         if use_cache and self.cache:
             cache_key = self._get_cache_key(text, input_type)

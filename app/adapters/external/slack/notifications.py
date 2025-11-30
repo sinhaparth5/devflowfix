@@ -103,6 +103,7 @@ class SlackNotificationAdapter:
         incident: Incident,
         similar_incidents: Optional[List[Dict[str, Any]]] = None,
         notification_type: NotificationType = NotificationType.INCIDENT_DETECTED,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Post incident notification to #incidents channel with rich formatting.
@@ -111,10 +112,17 @@ class SlackNotificationAdapter:
             incident: Incident object to notify about
             similar_incidents: List of similar incidents from RAG
             notification_type: Type of notification
+            **kwargs: Additional context (error, remediation_result, decision, etc.)
             
         Returns:
             Slack API response
         """
+        # Sanitize kwargs to ensure they are JSON serializable
+        # This prevents errors when logging non-serializable objects
+        for key, value in kwargs.items():
+            if value is not None and not isinstance(value, (str, int, float, bool, list, dict)):
+                kwargs[key] = str(value)
+        
         blocks = self._build_incident_blocks(
             incident=incident,
             similar_incidents=similar_incidents or [],

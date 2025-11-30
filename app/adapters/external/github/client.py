@@ -87,6 +87,7 @@ class GitHubClient:
             base_url=self.BASE_URL,
             timeout=timeout,
             headers=self._get_default_headers(),
+            follow_redirects=True,
         )
         
         self.circuit_breaker = CircuitBreaker(

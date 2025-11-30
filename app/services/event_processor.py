@@ -309,15 +309,25 @@ class EventProcessor:
             
             result = []
             for inc, similarity in similar:
-                result.append({
-                    "incident_id": inc.incident_id,
-                    "similarity": similarity,
-                    "outcome": inc.outcome,
-                    "root_cause": inc.root_cause,
-                    "remediation_plan": inc.remediation_plan,
-                    "resolved_at": inc.resolved_at,
-                    "resolution_time_seconds": inc.resolution_time_seconds,
-                })
+                try:
+                    safe_item = {
+                        "incident_id": inc.incident_id,
+                        "similarity": float(similarity) if similarity is not None else 0.0,
+                        "outcome": str(inc.outcome) if inc.outcome else None,
+                        "root_cause": str(inc.root_cause) if inc.root_cause else None,
+                        "remediation_plan": inc.remediation_plan,
+                        "resolved_at": inc.resolved_at,
+                        "resolution_time_seconds": int(inc.resolution_time_seconds) if inc.resolution_time_seconds else None,
+                    }
+                    result.append(safe_item)
+                except Exception:
+                    # Log full traceback for the problematic item but continue processing others
+                    logger.exception(
+                        "similar_item_conversion_failed",
+                        incident_id=getattr(inc, 'incident_id', None),
+                        raw_similarity=repr(similarity),
+                    )
+                    continue
             
             logger.info(
                 "similar_incidents_retrieved",
@@ -328,9 +338,9 @@ class EventProcessor:
             return result
             
         except Exception as e:
-            logger.warning(
+            logger.exception(
                 "similar_retrieval_failed",
-                incident_id=incident.incident_id,
+                incident_id=incident.incident_id if incident else None,
                 error=str(e),
             )
             return []
