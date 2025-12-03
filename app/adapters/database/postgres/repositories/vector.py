@@ -114,6 +114,7 @@ class VectorRepository:
             top_k: int = 5,
             similarity_threshold: float = 0.7,
             source_filter: Optional[IncidentSource] = None,
+            min_confidence: float = 0.0,
     ) -> List[Tuple[IncidentTable, float]]:
         incident = self.session.query(IncidentTable).filter(
             IncidentTable.incident_id == incident_id
