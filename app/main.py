@@ -343,95 +343,18 @@ app.include_router(
     tags=["Analytics"],
 )
 
-@app.post("/webhooks/github", tags=["Webhooks"])
-async def github_webhook_root(
-    request: Request,
-    x_github_event: Optional[str] = Header(None, alias="X-GitHub-Event"),
-    x_github_delivery: Optional[str] = Header(None, alias="X-GitHub-Delivery"),
-):
-    """
-    Root GitHub webhook endpoint.
-    """
-    from app.api.v1.webhook import receive_github_webhook, verify_github_webhook_signature
-    from app.dependencies import get_db, get_event_processor
-    from fastapi import BackgroundTasks
-    
-    event_type = str(x_github_event) if x_github_event else "unknown"
-    delivery_id = str(x_github_delivery) if x_github_delivery else None
-    
-    body = await verify_github_webhook_signature(request)
-    
-    db = next(get_db())
-    try:
-        event_processor = get_event_processor(db)
-        background_tasks = BackgroundTasks()
-        
-        return await receive_github_webhook(
-            request=request,
-            background_tasks=background_tasks,
-            x_github_event=event_type,
-            x_github_delivery=delivery_id,
-            body=body,
-            db=db,
-            event_processor=event_processor,
-        )
-    finally:
-        db.close()
-
-
-@app.post("/webhooks/argocd", tags=["Webhooks"])
-async def argocd_webhook_root(
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    from app.api.v1.webhook import receive_argocd_webhook
-    
-    payload = await request.json()
-    event_processor = get_event_processor(db)
-    
-    from fastapi import BackgroundTasks
-    background_tasks = BackgroundTasks()
-    
-    return await receive_argocd_webhook(
-        request=request,
-        background_tasks=background_tasks,
-        payload=payload,
-        db=db,
-        event_processor=event_processor,
-    )
-
-
-@app.post("/webhooks/kubernetes", tags=["Webhooks"])
-async def kubernetes_webhook_root(
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    from app.api.v1.webhook import receive_kubernetes_webhook
-    
-    payload = await request.json()
-    event_processor = get_event_processor(db)
-    
-    from fastapi import BackgroundTasks
-    background_tasks = BackgroundTasks()
-    
-    return await receive_kubernetes_webhook(
-        request=request,
-        background_tasks=background_tasks,
-        payload=payload,
-        db=db,
-        event_processor=event_processor,
-    )
-
-
 logger.info(
     "routers_registered",
     routers=[
         "/api/v1/auth",
-        "/api/v1/incidents"
+        "/api/v1/incidents",
         "/api/v1/webhook",
         "/api/v1/analytics",
-        "/webhooks/github",
-        "/webhooks/argocd",
-        "/webhooks/kubernetes",
     ],
+    webhook_endpoints=[
+        "/api/v1/webhook/github/{user_id}",
+        "/api/v1/webhook/argocd/{user_id}",
+        "/api/v1/webhook/kubernetes/{user_id}",
+        "/api/v1/webhook/generic/{user_id}",
+    ]
 )
