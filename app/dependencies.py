@@ -179,7 +179,7 @@ class ServiceContainer:
             return None
 
         from app.services.retriever import RetrieverService
-        from app.adapters.database.postgres.vector import VectorRepository
+        from app.adapters.database.postgres.repositories.vector import VectorRepository
 
         vector_repo = VectorRepository(db)
 
