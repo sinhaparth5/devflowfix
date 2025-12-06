@@ -6,6 +6,8 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import structlog
 
+from app.adapters.external.github.client import GitHubClient
+
 logger = structlog.get_logger(__name__)
 
 @dataclass
@@ -171,12 +173,15 @@ class GitHubLogParser:
         return log_text
     
 class GitHubLogExtractor:
-    def __init__(self):
+    def __init__(self, github_token: Optional[str] = None):
+        from app.core.config import settings
         self.parser = GitHubLogParser()
+        self.github_token = github_token or settings.github_token
 
     async def fetch_and_parse_logs(self, github_client, owner: str, repo: str, run_id: int) -> str:
         try:
-            jobs = await github_client.list_jobs_for_workflow_run(owner=owner, repo=repo, run_id=run_id)
+            async with GitHubClient(token=self.github_token) as client:
+                jobs = await client.list_jobs_for_workflow_run(owner=owner, repo=repo, run_id=run_id)
 
             failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
 

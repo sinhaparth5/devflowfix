@@ -681,15 +681,13 @@ async def fetch_github_workflow_logs(
 
         log_extractor = GitHubLogExtractor()
         
-        async with GitHubClient() as client:
-            error_summary = await log_extractor(
-                github_client=client,
-                owner=owner,
-                repo=repo_name,
-                run_id=run_id
-            )
+        error_summary = await log_extractor.fetch_and_parse_logs(
+            owner=owner,
+            repo=repo_name,
+            run_id=run_id
+        )
 
-            return error_summary
+        return error_summary
     
     except Exception as e:
         logger.error(
