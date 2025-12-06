@@ -8,7 +8,6 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-
 @dataclass
 class ErrorBlock:
     step_name: str
@@ -18,9 +17,7 @@ class ErrorBlock:
     line_number: int
     severity: str
 
-
 class GitHubLogParser:
-    
     ERROR_PATTERNS = [
         (r'##\[error\](.+)', 'github_error', 'high'),
         (r'Error: Process completed with exit code (\d+)', 'exit_code', 'high'),
@@ -175,9 +172,7 @@ class GitHubLogParser:
         
         return log_text
 
-
 class GitHubLogExtractor:
-    
     def __init__(self, github_token: Optional[str] = None):
         from app.core.config import settings
         self.parser = GitHubLogParser()
@@ -206,7 +201,6 @@ class GitHubLogExtractor:
                     logs = await client.download_job_logs(owner=owner, repo=repo, job_id=job_id)
                     
                     errors = self.parser.extract_errors(logs)
-                    
                     for error in errors:
                         error.step_name = f"{job_name} / {error.step_name}"
                         all_errors.append(error)
