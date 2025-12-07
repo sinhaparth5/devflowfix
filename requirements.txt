@@ -2,6 +2,7 @@
 fastapi
 uvicorn[standard]
 mangum
+gunicorn
 
 # Database & ORM
 sqlmodel
