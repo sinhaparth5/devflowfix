@@ -611,6 +611,93 @@ class GitHubClient:
         """
         return self.circuit_breaker.get_stats()
     
+    async def get_ref(
+            self,
+            owner: str,
+            repo: str,
+            ref: str,
+    ) -> Dict[str, Any]:
+        """Get a reference (branch/tag)"""
+        endpoint = f"/repos/{owner}/{repo}/git/refs/{ref}"
+        return await self.get(endpoint)
+    
+    async def create_ref(
+        self,
+        owner: str,
+        repo: str,
+        ref: str,
+        sha: str,   
+    ) -> Dict[str, Any]:
+        """Create a new reference (branch)"""
+        endpoint = f"/repos/{owner}/{repo}/git/refs"
+        return await self.post(endpoint, json={"ref": ref, "sha": sha})
+    
+    async def get_file_contents(
+            self,
+            owner: str,
+            repo: str,
+            path: str,
+            ref: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get file contents"""
+        endpoint = f"/repos/{owner}/{repo}/contents/{path}"
+        params = {"ref": ref} if ref else {}
+        return await self.get(endpoint, params=params)
+    
+    async def create_or_update_file(
+            self,
+            owner: str,
+            repo: str,
+            path: str,
+            message: str,
+            content: str,
+            branch: str,
+            sha: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a file."""
+        import base64
+        endpoint = f"/repos/{owner}/{repo}/contents/{path}"
+        content_b64 = base64.b64encode(content.encode()).decode()
+
+        payload = {
+            "message": message,
+            "content": content_b64,
+            "branch": branch
+        }
+
+        if sha:
+            payload["sha"] = sha
+
+        return await self.post(endpoint, json=payload)
+    
+    async def create_pull_request(
+            self,
+            owner: str,
+            repo: str,
+            title: str,
+            body: str,
+            head: str,
+            base: str,
+    ) -> Dict[str, Any]:
+        """Create a pull request."""
+        endpoint = f"/repos/{owner}/{repo}/pulls"
+
+        payload = {
+            "title": title,
+            "body": body,
+            "head": head,
+            "base": base,
+        }
+
+        logger.info(
+            "github_create_pr",
+            owner=owner,
+            repo=repo,
+            title=title,
+        )
+
+        return await self.post(endpoint, json=payload)
+    
     async def close(self) -> None:
         """Close HTTP client."""
         await self.client.aclose()
