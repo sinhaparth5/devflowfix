@@ -2,8 +2,10 @@
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 import re
-from typing import List, Dict, Optional
-from dataclasses import dataclass
+import hashlib
+from typing import List, Dict, Optional, Set
+from dataclasses import dataclass, field
+from collections import defaultdict
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -13,164 +15,210 @@ class ErrorBlock:
     step_name: str
     error_type: str
     error_message: str
-    context: List[str]
-    line_number: int
-    severity: str
+    file_path: Optional[str] = None
+    line_number: Optional[int] = None
+    severity: str = "medium"
+    
+    def get_hash(self) -> str:
+        content = f"{self.error_type}:{self.error_message}:{self.file_path or ''}"
+        return hashlib.md5(content.encode()).hexdigest()[:8]
+
+@dataclass
+class ErrorGroup:
+    error_type: str
+    step_name: str
+    files: Dict[str, List[str]] = field(default_factory=lambda: defaultdict(list))
+    severity: str = "medium"
+    count: int = 0
 
 class GitHubLogParser:
     ERROR_PATTERNS = [
         (r'##\[error\](.+)', 'github_error', 'high'),
         (r'Error: Process completed with exit code (\d+)', 'exit_code', 'high'),
-        (r'(?i)error[:\s](.+)', 'error', 'medium'),
+        (r'(\d+:\d+)\s+error\s+(.+?)\s+(@[\w/-]+)', 'lint_error', 'medium'),
         (r'(?i)fatal[:\s](.+)', 'fatal', 'critical'),
-        (r'(?i)exception[:\s](.+)', 'exception', 'high'),
-        (r'(?i)FAIL[:\s](.+)', 'test_failure', 'medium'),
-        (r'(?i)failed[:\s](.+)', 'failure', 'medium'),
         (r'(?i)panic:', 'panic', 'critical'),
         (r'(?i)traceback \(most recent call last\)', 'python_exception', 'high'),
-        (r'(?i)syntax error', 'syntax_error', 'high'),
-        (r'(?i)module not found', 'import_error', 'high'),
-        (r'(?i)cannot find module', 'import_error', 'high'),
-        (r'npm ERR!', 'npm_error', 'medium'),
-        (r'yarn error', 'yarn_error', 'medium'),
-        (r'composer error', 'composer_error', 'medium'),
-        (r'pip error', 'pip_error', 'medium'),
+        (r'FAIL[:\s](.+)', 'test_failure', 'medium'),
+        (r'npm ERR!(.+)', 'npm_error', 'medium'),
+        (r'Error:\s*(.+)', 'error', 'medium'),
     ]
     
-    STEP_START = r'##\[group\](.+)'
+    FILE_PATH_PATTERN = r'([/\w.-]+\.(tsx?|jsx?|py|go|java|rb|php|cs|cpp|c|h))'
     ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     
-    SKIP_PATTERNS = [
-        r'##\[debug\]',
-        r'^\s*$',
-        r'##\[command\]',
-    ]
-    
-    def __init__(self, context_lines: int = 5, max_errors: int = 10):
-        self.context_lines = context_lines
-        self.max_errors = max_errors
-        self._compiled_error_patterns = [
+    def __init__(self, max_errors_per_type: int = 5, max_total_length: int = 2000):
+        self.max_errors_per_type = max_errors_per_type
+        self.max_total_length = max_total_length
+        self._compiled_patterns = [
             (re.compile(pattern, re.IGNORECASE), error_type, severity)
             for pattern, error_type, severity in self.ERROR_PATTERNS
         ]
-        self._compiled_skip_patterns = [re.compile(p) for p in self.SKIP_PATTERNS]
     
     def clean_line(self, line: str) -> str:
         line = self.ANSI_ESCAPE.sub('', line)
         line = re.sub(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+', '', line)
         return line.strip()
     
-    def should_skip(self, line: str) -> bool:
-        return any(pattern.search(line) for pattern in self._compiled_skip_patterns)
+    def extract_file_path(self, line: str) -> Optional[str]:
+        match = re.search(self.FILE_PATH_PATTERN, line)
+        return match.group(1) if match else None
+    
+    def parse_lint_error(self, line: str, step_name: str) -> Optional[ErrorBlock]:
+        match = re.search(r'(\d+:\d+)\s+error\s+(.+?)\s+(@[\w/-]+)', line)
+        if match:
+            location, message, rule = match.groups()
+            file_path = self.extract_file_path(line)
+            
+            return ErrorBlock(
+                step_name=step_name,
+                error_type='lint_error',
+                error_message=f"{message} ({rule})",
+                file_path=file_path,
+                line_number=None,
+                severity='medium'
+            )
+        return None
     
     def extract_errors(self, log_content: str) -> List[ErrorBlock]:
         lines = log_content.split('\n')
         errors = []
         current_step = "Unknown Step"
+        seen_hashes: Set[str] = set()
+        current_file = None
         
         for i, line in enumerate(lines):
-            if self.should_skip(line):
-                continue
-            
             cleaned = self.clean_line(line)
             if not cleaned:
                 continue
             
-            step_match = re.search(self.STEP_START, line)
+            step_match = re.search(r'##\[group\](.+)', line)
             if step_match:
                 current_step = step_match.group(1).strip()
                 continue
             
-            for pattern, error_type, severity in self._compiled_error_patterns:
+            file_path = self.extract_file_path(cleaned)
+            if file_path and not re.search(r'\d+:\d+\s+error', cleaned):
+                current_file = file_path
+            
+            lint_match = re.search(r'(\d+:\d+)\s+error\s+(.+?)\s+(@[\w/-]+)', cleaned)
+            if lint_match and current_file:
+                location, message, rule = lint_match.groups()
+                
+                error = ErrorBlock(
+                    step_name=current_step,
+                    error_type='lint_error',
+                    error_message=f"{message} ({rule})",
+                    file_path=current_file,
+                    line_number=None,
+                    severity='medium'
+                )
+                
+                error_hash = error.get_hash()
+                if error_hash not in seen_hashes:
+                    seen_hashes.add(error_hash)
+                    errors.append(error)
+                continue
+            
+            for pattern, error_type, severity in self._compiled_patterns:
+                if error_type == 'lint_error':
+                    continue
+                    
                 match = pattern.search(cleaned)
                 if match:
                     error_msg = match.group(1) if match.lastindex else cleaned
                     
-                    context_start = max(0, i - self.context_lines)
-                    context_end = min(len(lines), i + self.context_lines + 1)
-                    context = [
-                        self.clean_line(lines[j]) 
-                        for j in range(context_start, context_end)
-                        if not self.should_skip(lines[j])
-                    ]
-                    
-                    errors.append(ErrorBlock(
+                    error = ErrorBlock(
                         step_name=current_step,
                         error_type=error_type,
                         error_message=error_msg.strip(),
-                        context=context,
-                        line_number=i + 1,
+                        file_path=None,
                         severity=severity
-                    ))
+                    )
                     
-                    if len(errors) >= self.max_errors:
-                        return errors
+                    error_hash = error.get_hash()
+                    if error_hash not in seen_hashes:
+                        seen_hashes.add(error_hash)
+                        errors.append(error)
                     break
         
         return errors
     
-    def format_error_summary(self, errors: List[ErrorBlock]) -> str:
-        if not errors:
-            return "No specific errors detected in logs"
+    def group_errors(self, errors: List[ErrorBlock]) -> List[ErrorGroup]:
+        groups: Dict[str, ErrorGroup] = {}
         
-        summary_parts = []
-        
-        for idx, error in enumerate(errors, 1):
-            summary_parts.append(f"\n{'='*60}")
-            summary_parts.append(f"Error #{idx} - {error.error_type.upper()} [{error.severity}]")
-            summary_parts.append(f"Step: {error.step_name}")
-            summary_parts.append(f"Line: {error.line_number}")
-            summary_parts.append(f"{'='*60}")
-            summary_parts.append(f"Message: {error.error_message}")
+        for error in errors:
+            key = f"{error.step_name}:{error.error_type}"
             
-            if error.context:
-                summary_parts.append(f"\nContext:")
-                for ctx_line in error.context:
-                    if ctx_line:
-                        summary_parts.append(f"  {ctx_line}")
+            if key not in groups:
+                groups[key] = ErrorGroup(
+                    error_type=error.error_type,
+                    step_name=error.step_name,
+                    severity=error.severity
+                )
+            
+            group = groups[key]
+            group.count += 1
+            
+            if error.file_path:
+                group.files[error.file_path].append(error.error_message)
+            else:
+                group.files["_general"].append(error.error_message)
         
-        return '\n'.join(summary_parts)
+        return list(groups.values())
     
-    def extract_critical_logs(self, log_content: str, max_length: int = 3000) -> str:
+    def format_compact_summary(self, error_groups: List[ErrorGroup]) -> str:
+        if not error_groups:
+            return "No errors detected"
+        
+        lines = []
+        total_errors = sum(g.count for g in error_groups)
+        
+        lines.append(f"ERRORS DETECTED: {total_errors} unique issues")
+        lines.append("")
+        
+        for idx, group in enumerate(error_groups, 1):
+            if idx > 3:
+                remaining = len(error_groups) - 3
+                lines.append(f"\n... and {remaining} more error group(s)")
+                break
+            
+            lines.append(f"{idx}. {group.error_type.upper()} in '{group.step_name}' [{group.severity}]")
+            
+            file_count = 0
+            for file_path, messages in group.files.items():
+                if file_count >= self.max_errors_per_type:
+                    lines.append(f"   ... {len(group.files) - file_count} more files")
+                    break
+                
+                if file_path != "_general":
+                    lines.append(f"   📄 {file_path}")
+                
+                for msg in messages[:3]:
+                    lines.append(f"      • {msg}")
+                
+                if len(messages) > 3:
+                    lines.append(f"      ... {len(messages) - 3} more in this file")
+                
+                file_count += 1
+            
+            lines.append("")
+        
+        summary = "\n".join(lines)
+        
+        if len(summary) > self.max_total_length:
+            summary = summary[:self.max_total_length] + "\n... [truncated]"
+        
+        return summary
+    
+    def extract_critical_logs(self, log_content: str) -> str:
         errors = self.extract_errors(log_content)
         
-        if errors:
-            summary = self.format_error_summary(errors)
-            
-            if len(summary) > max_length:
-                lines = summary.split('\n')
-                truncated = []
-                current_length = 0
-                
-                for line in lines:
-                    if current_length + len(line) > max_length - 100:
-                        truncated.append("\n... [truncated - error summary too long] ...")
-                        break
-                    truncated.append(line)
-                    current_length += len(line)
-                
-                return '\n'.join(truncated)
-            
-            return summary
+        if not errors:
+            return "No specific errors detected"
         
-        lines = log_content.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            if self.should_skip(line):
-                continue
-            cleaned = self.clean_line(line)
-            if cleaned:
-                cleaned_lines.append(cleaned)
-        
-        log_text = '\n'.join(cleaned_lines)
-        
-        if len(log_text) > max_length:
-            beginning = log_text[:max_length // 2]
-            end = log_text[-(max_length // 2):]
-            return f"{beginning}\n\n... [log truncated] ...\n\n{end}"
-        
-        return log_text
+        groups = self.group_errors(errors)
+        return self.format_compact_summary(groups)
 
 class GitHubLogExtractor:
     def __init__(self, github_token: Optional[str] = None):
@@ -184,7 +232,7 @@ class GitHubLogExtractor:
         try:
             async with GitHubClient(token=self.github_token) as client:
                 jobs = await client.list_jobs_for_workflow_run(owner=owner, repo=repo, run_id=run_id)
-            
+                
                 failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
                 
                 if not failed_jobs:
@@ -211,16 +259,15 @@ class GitHubLogExtractor:
                         continue
                 
                 if all_errors:
-                    summary = self.parser.format_error_summary(all_errors)
-                    
-                    if len(summary) > 3500:
-                        summary = summary[:3500] + "\n\n... [truncated for embedding]"
+                    groups = self.parser.group_errors(all_errors)
+                    summary = self.parser.format_compact_summary(groups)
                     
                     logger.info(
                         "github_errors_extracted",
                         repo=f"{owner}/{repo}",
                         run_id=run_id,
-                        error_count=len(all_errors),
+                        unique_errors=len(all_errors),
+                        error_groups=len(groups),
                         summary_length=len(summary)
                     )
                     
