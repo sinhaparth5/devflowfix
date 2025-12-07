@@ -1,21 +1,69 @@
-FROM python:3.12-slim
+# Stage 1: Builder - Compile dependencies
+FROM python:3.12-slim AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
     libpq-dev \
-    && rm -rf /var/lib/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app 
+COPY requirements.txt .
+RUN pip install --prefix=/install --no-cache-dir --upgrade pip && \
+    pip install --prefix=/install --no-cache-dir -r requirements.txt
 
-COPY ./requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY app ./app
+RUN python -m compileall -q app/
 
-COPY . ./ 
+# Stage 2: Runtime - Minimal production image
+FROM python:3.12-slim
+
+LABEL maintainer="Parth Sinha and Shine Gupta"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PATH="/install/bin:$PATH" \
+    PYTHONPATH="/install/lib/python3.12/site-packages:$PYTHONPATH"
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
+    && apt-get clean
+
+COPY --from=builder /install /install
+
+COPY --from=builder /build/app ./app
+COPY . .
+
+RUN groupadd -r appuser && \
+    useradd -r -g appuser -u 1000 -m appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD gunicorn app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers ${WORKERS:-4} \
+    --worker-connections 1000 \
+    --bind 0.0.0.0:8000 \
+    --timeout 60 \
+    --keep-alive 5 \
+    --max-requests 10000 \
+    --max-requests-jitter 1000 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level ${LOG_LEVEL:-info} \
+    --preload

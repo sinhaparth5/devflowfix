@@ -1,0 +1,11 @@
+.github
+.pytest*
+.venv
+benchmarks
+config
+docs
+examples
+monitoring
+notebooks
+scripts
+.env.example
