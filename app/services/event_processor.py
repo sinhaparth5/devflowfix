@@ -21,6 +21,7 @@ from app.services.decision import DecisionService
 from app.services.analyzer import AnalyzerService
 from app.services.remediator import RemediatorService
 from app.services.retriever import RetrieverService
+from app.services.pr_creator import PRCreatorService
 from app.adapters.database.postgres.repositories.incident import IncidentRepository
 from app.adapters.database.postgres.repositories.vector import VectorRepository
 from app.adapters.database.postgres.models import IncidentTable
@@ -57,7 +58,6 @@ class ProcessingResult:
 
 
 class EventProcessor:
-    
     def __init__(
         self,
         incident_repository: IncidentRepository,
@@ -71,6 +71,8 @@ class EventProcessor:
         default_environment: Environment = Environment.DEVELOPMENT,
         enable_notifications: bool = True,
         enable_auto_remediation: bool = True,
+        pr_creator: Optional[PRCreatorService] = None,
+        enable_auto_pr: bool = True,
     ):
         self.incident_repo = incident_repository
         self.vector_repo = vector_repository
@@ -83,6 +85,8 @@ class EventProcessor:
         self.default_environment = default_environment
         self.enable_notifications = enable_notifications
         self.enable_auto_remediation = enable_auto_remediation
+        self.pr_creator = pr_creator,
+        self.enable_auto_pr = enable_auto_pr,
         
         logger.info(
             "event_processor_initialized",
@@ -519,6 +523,82 @@ class EventProcessor:
                 incident_id=incident.incident_id,
                 failure_type=analysis.category.value,
             )
+
+            if (
+                self.enable_auto_pr
+                and solution.get("code_changes")
+                and self._should_create_pr(analysis, incident)
+            ):
+                try:
+                    logger.info(
+                        "auto_pr_creation_start",
+                        incident_id=incident.incident_id,
+                        failure_type=analysis.category.value,
+                    )
+
+                    pr_result = await self._create_fix_pr(
+                        incident=incident,
+                        analysis=analysis,
+                        solution=solution,
+                    )
+
+                    logger.info(
+                        "auto_pr_create_success",
+                        incident_id=incident.incident_id,
+                        pr_number=pr_result.get("number"),
+                        pr_url=pr_result.get("html_url"),
+                    )
+
+                    print(f"\n{'🎉 '*20}")
+                    print(f"{'='*80}")
+                    print(f"  AUTOMATED FIX PULL REQUEST CREATED!")
+                    print(f"{'='*80}")
+                    print(f"  PR #{pr_result.get('number')}: {pr_result.get('title', 'Auto-fix')}")
+                    print(f"  🔗 URL: {pr_result.get('html_url')}")
+                    print(f"  🌿 Branch: {pr_result.get('head', {}).get('ref', 'N/A')}")
+                    print(f"  📝 Files Changed: {len(solution.get('code_changes', []))}")
+                    print(f"  ⚡ Status: Ready for Review")
+                    print(f"{'='*80}")
+                    print(f"{'🎉 '*20}\n")
+                    
+                    # Store PR info in incident metadata
+                    if not incident.context.get("automated_pr"):
+                        incident.context["automated_pr"] = {
+                            "number": pr_result.get("number"),
+                            "url": pr_result.get("html_url"),
+                            "branch": pr_result.get("head", {}).get("ref"),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        
+                        # Update incident in database
+                        incident_table = self.incident_repo.get_by_id(incident.incident_id)
+                        if incident_table:
+                            incident_table.context = incident.context
+                            self.incident_repo.update(incident_table)
+                except Exception as pr_error:
+                    logger.error(
+                        "auto_pr_creation_failed",
+                        incident_id=incident.incident_id,
+                        error=str(pr_error),
+                        exc_info=True,
+                    )
+
+                    print(f"\n⚠️  WARNING: Failed to create automated PR")
+                    print(f"   Reason: {str(pr_error)}")
+                    print(f"   You can still use the solution details above to fix manually.\n")
+            elif solution.get("code_changes"):
+                if not self.enable_auto_pr:
+                    logger.info(
+                        "auto_pr_skipped_disabled",
+                        incident_id=incident.incident_id,
+                    )
+                elif not self._should_create_pr(analysis, incident):
+                    logger.info(
+                        "auto_pr_skipped_criteria_not_met",
+                        incident_id=incident.incident_id,
+                        confidence=analysis.confidence,
+                        failure_type=analysis.category.value,
+                    )
             
         except Exception as e:
             logger.error(
@@ -527,6 +607,104 @@ class EventProcessor:
                 error=str(e),
                 exc_info=True,
             )
+        
+    def _should_create_pr(
+            self,
+            analysis: AnalysisResult,
+            incident: Incident,
+            min_confidence: float = 0.85,
+    ) -> bool:
+        """
+        Determine if an automated fix PR should be created.
+
+        Args:
+            analysis: Analysis result with failure classification
+            incident: Incident details
+            min_confidence: Minimum confidence threshold (default: 0.85)
+        
+        Returns:
+            True if PR should created, False otherwise
+        """
+        if analysis.confidence < min_confidence:
+            logger.info(
+                "pr_creation_skipped_low_confidence",
+                incident_id=incident.incident_id,
+                confidence=analysis.confidence,
+                threshold=min_confidence,
+            )
+
+            return False
+        
+        from app.core.enums import FailureType
+
+        auto_fix_types = [
+            FailureType.LINT_FAILURE,
+            FailureType.TEST_FAILURE,
+            FailureType.DEPENDENCY_ERROR,
+            FailureType.CONFIG_ERROR,
+            FailureType.BUILD_FAILURE,
+        ]
+
+        if analysis.category not in auto_fix_types:
+            logger.info(
+                "pr_creation_skipped_failure_type",
+                incident_id=incident.incident_id,
+                failure_type=analysis.category.value,
+            )
+            return False
+        
+        if not incident.context.get("repository"):
+            logger.info(
+                "pr_creation_skipped_no_repo",
+                incident_id=incident.incident_id,
+            )
+            return False
+        
+        if incident.context.get("automate_pr"):
+            logger.info(
+                "pr_creation_skipped_already_exists",
+                incident_id=incident.incident_id,
+                existint_pr=incident.context["automated_pr"].get("number"),
+            )
+            return False
+        
+        from app.core.enums import Fixability
+
+        if analysis.fixability != Fixability.AUTO:
+            logger.info(
+                "pr_creation_skipped_not_auto_fixable",
+                incident_id=incident.incident_id,
+                fixability=analysis
+            )
+            return False
+        
+        logger.info(
+            "pr_creation_criteria_met",
+            incident_id=incident.incident_id,
+            confidence=analysis.confidence,
+            failure_type=analysis.category.value,
+        )
+
+        return True
+    
+    async def _create_fix_pr(
+            self,
+            incident: Incident,
+            analysis: AnalysisResult,
+            solution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        from app.services.pr_creator import PRCreatorService
+
+        if not hasattr(self, 'pr_creator') or not self.pr_creator:
+            self.pr_creator = PRCreatorService()
+
+        pr_result = await self.pr_creator.create_fix_pr(
+            incident=incident,
+            analysis=analysis,
+            solution=solution,
+        )
+
+        return pr_result
     
     async def _update_incident_analysis(
         self,
