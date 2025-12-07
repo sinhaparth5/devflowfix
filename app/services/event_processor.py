@@ -133,6 +133,9 @@ class EventProcessor:
                     similar_incidents=similar_incidents,
                 )
             
+            # Generate and log solutions
+            await self._generate_and_log_solutions(incident, analysis)
+            
             decision = await self._decide(analysis, incident, context, similar_incidents)
             
             if not decision.should_auto_fix:
@@ -365,6 +368,165 @@ class EventProcessor:
         )
         
         return analysis
+    
+    async def _generate_and_log_solutions(
+        self,
+        incident: Incident,
+        analysis: AnalysisResult,
+    ):
+        """
+        Generate and log solutions for the incident using the LLM.
+        
+        Calls NVIDIA API to generate detailed solutions based on error analysis
+        and logs them to the terminal.
+        """
+        try:
+            # Check if we have an LLM client available
+            if not self.analyzer or not self.analyzer.llm:
+                logger.warning(
+                    "solution_generation_skipped_no_llm",
+                    incident_id=incident.incident_id,
+                )
+                return
+            
+            logger.info(
+                "solution_generation_start",
+                incident_id=incident.incident_id,
+                failure_type=analysis.category.value if analysis.category else "unknown",
+            )
+            
+            # Generate solutions using LLM
+            solution = await self.analyzer.llm.generate_solution(
+                error_log=incident.error_log,
+                failure_type=analysis.category.value if analysis.category else "unknown",
+                root_cause=analysis.root_cause or "Unknown root cause",
+                context=incident.context,
+                repository_code=None,  # Can be extended to fetch from repository
+            )
+            
+            # Log solutions to terminal
+            logger.info(
+                "solution_generated",
+                incident_id=incident.incident_id,
+                failure_type=analysis.category.value,
+            )
+            
+            # Log immediate fix details
+            if solution.get("immediate_fix"):
+                immediate_fix = solution["immediate_fix"]
+                logger.info(
+                    "solution_immediate_fix",
+                    incident_id=incident.incident_id,
+                    description=immediate_fix.get("description", ""),
+                    steps=immediate_fix.get("steps", []),
+                    estimated_time=immediate_fix.get("estimated_time_minutes", 0),
+                    risk_level=immediate_fix.get("risk_level", "unknown"),
+                )
+                
+                # Print to console
+                print("\n" + "="*80)
+                print(f"✅ SOLUTION FOR: {analysis.category.value.upper()}")
+                print("="*80)
+                print(f"\n📋 Immediate Fix:")
+                print(f"   Description: {immediate_fix.get('description', 'N/A')}")
+                print(f"   Estimated Time: {immediate_fix.get('estimated_time_minutes', 0)} minutes")
+                print(f"   Risk Level: {immediate_fix.get('risk_level', 'Unknown').upper()}")
+                print(f"\n   Steps:")
+                for i, step in enumerate(immediate_fix.get("steps", []), 1):
+                    print(f"      {i}. {step}")
+            
+            # Log code changes if any
+            if solution.get("code_changes"):
+                code_changes_list = solution["code_changes"]
+                
+                # Handle both list and dict formats
+                if isinstance(code_changes_list, dict):
+                    code_changes_list = [code_changes_list]
+                
+                print(f"\n📝 Code Changes ({len(code_changes_list)} file(s)):")
+                
+                for idx, code_change in enumerate(code_changes_list, 1):
+                    if not isinstance(code_change, dict):
+                        continue
+                    
+                    logger.info(
+                        "solution_code_changes",
+                        incident_id=incident.incident_id,
+                        file_index=idx,
+                        file_path=code_change.get("file_path", ""),
+                        explanation=code_change.get("explanation", ""),
+                    )
+                    
+                    print(f"\n   [{idx}] File: {code_change.get('file_path', 'N/A')}")
+                    print(f"       Line Numbers: {code_change.get('line_numbers', 'N/A')}")
+                    print(f"       Explanation: {code_change.get('explanation', 'N/A')}")
+                    print(f"\n       Current Code:")
+                    print(f"       ```")
+                    print(f"       {code_change.get('current_code', 'N/A')}")
+                    print(f"       ```")
+                    print(f"\n       Fixed Code:")
+                    print(f"       ```")
+                    print(f"       {code_change.get('fixed_code', 'N/A')}")
+                    print(f"       ```")
+            
+            # Log configuration changes
+            if solution.get("configuration_changes"):
+                print(f"\n⚙️  Configuration Changes:")
+                for config in solution["configuration_changes"][:3]:  # Limit to first 3
+                    logger.info(
+                        "solution_config_change",
+                        incident_id=incident.incident_id,
+                        file=config.get("file", ""),
+                        setting=config.get("setting", ""),
+                    )
+                    print(f"   File: {config.get('file', 'N/A')}")
+                    print(f"   Setting: {config.get('setting', 'N/A')}")
+                    print(f"   Current Value: {config.get('current_value', 'N/A')}")
+                    print(f"   Recommended Value: {config.get('recommended_value', 'N/A')}")
+                    print(f"   Reason: {config.get('reason', 'N/A')}")
+                    print()
+            
+            # Log prevention measures
+            if solution.get("prevention_measures"):
+                print(f"\n🛡️  Prevention Measures:")
+                for measure in solution["prevention_measures"][:3]:
+                    logger.info(
+                        "solution_prevention",
+                        incident_id=incident.incident_id,
+                        measure=measure.get("measure", ""),
+                    )
+                    print(f"   - {measure.get('measure', 'N/A')}")
+                    print(f"     {measure.get('description', 'N/A')}")
+            
+            # Log resources
+            if solution.get("resources"):
+                print(f"\n📚 Helpful Resources:")
+                for resource in solution["resources"][:3]:
+                    logger.info(
+                        "solution_resource",
+                        incident_id=incident.incident_id,
+                        type=resource.get("type", ""),
+                        title=resource.get("title", ""),
+                    )
+                    print(f"   - [{resource.get('type', 'Resource').upper()}] {resource.get('title', 'N/A')}")
+                    if resource.get("url"):
+                        print(f"     URL: {resource.get('url', 'N/A')}")
+            
+            print("\n" + "="*80 + "\n")
+            
+            logger.info(
+                "solution_generation_complete",
+                incident_id=incident.incident_id,
+                failure_type=analysis.category.value,
+            )
+            
+        except Exception as e:
+            logger.error(
+                "solution_generation_failed",
+                incident_id=incident.incident_id,
+                error=str(e),
+                exc_info=True,
+            )
     
     async def _update_incident_analysis(
         self,

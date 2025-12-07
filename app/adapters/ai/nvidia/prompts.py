@@ -341,3 +341,95 @@ FEW_SHOT_EXAMPLES = [
         }
     },
 ]
+
+
+def build_solution_generation_prompt(
+    error_log: str,
+    failure_type: str,
+    root_cause: str,
+    context: Dict[str, Any],
+    repository_code: Optional[str] = None,
+) -> str:
+    """
+    Build prompt to generate detailed solutions based on error analysis.
+    
+    Args:
+        error_log: Error log or message
+        failure_type: Classified failure type
+        root_cause: Root cause analysis
+        context: Incident context
+        repository_code: Optional relevant code from repository
+        
+    Returns:
+        Formatted prompt string for solution generation
+    """
+    context_lines = "\n".join([f"- {k}: {v}" for k, v in context.items() if v])
+    
+    code_section = ""
+    if repository_code:
+        code_section = f"\n## Relevant Repository Code\n```\n{repository_code[:2000]}\n```\n"
+    
+    prompt = f"""You are a CI/CD expert. Analyze the following incident and provide ONLY a valid JSON solution with NO other text.
+
+## INCIDENT DETAILS
+
+**Failure Type:** {failure_type}
+**Root Cause:** {root_cause}
+
+**Error Log:**
+```
+{error_log[:2000]}
+```
+
+**Context:**
+{context_lines}
+{code_section}
+
+## INSTRUCTIONS
+
+Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the following structure:
+
+{{
+  "immediate_fix": {{
+    "description": "First action to resolve this issue",
+    "steps": ["Step 1", "Step 2", "Step 3"],
+    "estimated_time_minutes": 15,
+    "risk_level": "low"
+  }},
+  "code_changes": [
+    {{
+      "file_path": "path/to/file.js",
+      "description": "What to change",
+      "current_code": "problematic code snippet",
+      "fixed_code": "corrected code snippet",
+      "explanation": "Why this fixes the issue"
+    }}
+  ],
+  "configuration_changes": [
+    {{
+      "file": "config file path",
+      "setting": "config key or parameter",
+      "current_value": "current value",
+      "recommended_value": "new value",
+      "reason": "Why this helps"
+    }}
+  ],
+  "prevention_measures": [
+    {{
+      "measure": "Action to prevent future failures",
+      "description": "How this prevents the issue",
+      "implementation_effort": "low"
+    }}
+  ]
+}}
+
+IMPORTANT: 
+- Return ONLY valid JSON with NO markdown code blocks
+- Do NOT include explanations outside the JSON
+- All fields should be strings except arrays
+- If a section doesn't apply, use empty array [] or null
+- Ensure all JSON is valid and properly escaped
+
+Now generate the solution:"""
+    
+    return prompt

@@ -1,0 +1,9 @@
+﻿2025-12-05T20:48:03.5811024Z ##[group]Run echo "Running tests that will fail..."
+2025-12-05T20:48:03.5811740Z [36;1mecho "Running tests that will fail..."[0m
+2025-12-05T20:48:03.5812402Z [36;1mecho "This is intentional for webhook testing"[0m
+2025-12-05T20:48:03.5812965Z [36;1mexit 1[0m
+2025-12-05T20:48:03.5849770Z shell: /usr/bin/bash -e {0}
+2025-12-05T20:48:03.5850294Z ##[endgroup]
+2025-12-05T20:48:03.5920043Z Running tests that will fail...
+2025-12-05T20:48:03.5920645Z This is intentional for webhook testing
+2025-12-05T20:48:03.5936766Z ##[error]Process completed with exit code 1.

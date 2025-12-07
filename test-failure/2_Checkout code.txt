@@ -1,0 +1,72 @@
+﻿2025-12-05T20:48:03.1188244Z ##[group]Run actions/checkout@v4
+2025-12-05T20:48:03.1189122Z with:
+2025-12-05T20:48:03.1189547Z   repository: Shine-5705/DevflowFix-tester
+2025-12-05T20:48:03.1190236Z   token: ***
+2025-12-05T20:48:03.1190621Z   ssh-strict: true
+2025-12-05T20:48:03.1191010Z   ssh-user: git
+2025-12-05T20:48:03.1191417Z   persist-credentials: true
+2025-12-05T20:48:03.1191886Z   clean: true
+2025-12-05T20:48:03.1192286Z   sparse-checkout-cone-mode: true
+2025-12-05T20:48:03.1192762Z   fetch-depth: 1
+2025-12-05T20:48:03.1193152Z   fetch-tags: false
+2025-12-05T20:48:03.1193548Z   show-progress: true
+2025-12-05T20:48:03.1193953Z   lfs: false
+2025-12-05T20:48:03.1194312Z   submodules: false
+2025-12-05T20:48:03.1194719Z   set-safe-directory: true
+2025-12-05T20:48:03.1195351Z ##[endgroup]
+2025-12-05T20:48:03.2245204Z Syncing repository: Shine-5705/DevflowFix-tester
+2025-12-05T20:48:03.2246972Z ##[group]Getting Git version info
+2025-12-05T20:48:03.2248215Z Working directory is '/home/runner/work/DevflowFix-tester/DevflowFix-tester'
+2025-12-05T20:48:03.2249354Z [command]/usr/bin/git version
+2025-12-05T20:48:03.2318452Z git version 2.52.0
+2025-12-05T20:48:03.2344109Z ##[endgroup]
+2025-12-05T20:48:03.2358030Z Temporarily overriding HOME='/home/runner/work/_temp/0c90253f-0adf-4b44-8e0b-636136ef89bf' before making global git config changes
+2025-12-05T20:48:03.2359420Z Adding repository directory to the temporary git global config as a safe directory
+2025-12-05T20:48:03.2370194Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/DevflowFix-tester/DevflowFix-tester
+2025-12-05T20:48:03.2406170Z Deleting the contents of '/home/runner/work/DevflowFix-tester/DevflowFix-tester'
+2025-12-05T20:48:03.2409575Z ##[group]Initializing the repository
+2025-12-05T20:48:03.2413659Z [command]/usr/bin/git init /home/runner/work/DevflowFix-tester/DevflowFix-tester
+2025-12-05T20:48:03.2506684Z hint: Using 'master' as the name for the initial branch. This default branch name
+2025-12-05T20:48:03.2507880Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2025-12-05T20:48:03.2509085Z hint: to use in all of your new repositories, which will suppress this warning,
+2025-12-05T20:48:03.2509955Z hint: call:
+2025-12-05T20:48:03.2510614Z hint:
+2025-12-05T20:48:03.2511549Z hint: 	git config --global init.defaultBranch <name>
+2025-12-05T20:48:03.2512708Z hint:
+2025-12-05T20:48:03.2513700Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2025-12-05T20:48:03.2515338Z hint: 'development'. The just-created branch can be renamed via this command:
+2025-12-05T20:48:03.2516619Z hint:
+2025-12-05T20:48:03.2517318Z hint: 	git branch -m <name>
+2025-12-05T20:48:03.2518337Z hint:
+2025-12-05T20:48:03.2519365Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2025-12-05T20:48:03.2521217Z Initialized empty Git repository in /home/runner/work/DevflowFix-tester/DevflowFix-tester/.git/
+2025-12-05T20:48:03.2524985Z [command]/usr/bin/git remote add origin https://github.com/Shine-5705/DevflowFix-tester
+2025-12-05T20:48:03.2557939Z ##[endgroup]
+2025-12-05T20:48:03.2559146Z ##[group]Disabling automatic garbage collection
+2025-12-05T20:48:03.2562657Z [command]/usr/bin/git config --local gc.auto 0
+2025-12-05T20:48:03.2590487Z ##[endgroup]
+2025-12-05T20:48:03.2591664Z ##[group]Setting up auth
+2025-12-05T20:48:03.2598085Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2025-12-05T20:48:03.2627964Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2025-12-05T20:48:03.2942244Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2025-12-05T20:48:03.2973586Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2025-12-05T20:48:03.3191134Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2025-12-05T20:48:03.3221435Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2025-12-05T20:48:03.3472081Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2025-12-05T20:48:03.3508693Z ##[endgroup]
+2025-12-05T20:48:03.3509433Z ##[group]Fetching the repository
+2025-12-05T20:48:03.3520776Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +37d34c0675a305e3c32348b9d9eb8457323445e4:refs/remotes/origin/main
+2025-12-05T20:48:03.5377984Z From https://github.com/Shine-5705/DevflowFix-tester
+2025-12-05T20:48:03.5379154Z  * [new ref]         37d34c0675a305e3c32348b9d9eb8457323445e4 -> origin/main
+2025-12-05T20:48:03.5409831Z ##[endgroup]
+2025-12-05T20:48:03.5410991Z ##[group]Determining the checkout info
+2025-12-05T20:48:03.5412504Z ##[endgroup]
+2025-12-05T20:48:03.5418061Z [command]/usr/bin/git sparse-checkout disable
+2025-12-05T20:48:03.5456843Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2025-12-05T20:48:03.5482032Z ##[group]Checking out the ref
+2025-12-05T20:48:03.5486353Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2025-12-05T20:48:03.5563941Z Switched to a new branch 'main'
+2025-12-05T20:48:03.5566559Z branch 'main' set up to track 'origin/main'.
+2025-12-05T20:48:03.5573047Z ##[endgroup]
+2025-12-05T20:48:03.5605641Z [command]/usr/bin/git log -1 --format=%H
+2025-12-05T20:48:03.5626772Z 37d34c0675a305e3c32348b9d9eb8457323445e4

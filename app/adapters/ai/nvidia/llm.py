@@ -12,6 +12,7 @@ from app.adapters.ai.nvidia.prompts import (
     build_classification_prompt,
     build_root_cause_analysis_prompt,
     build_remediation_validation_prompt,
+    build_solution_generation_prompt,
 )
 from app.core.enums import FailureType, Fixability, RemediationActionType
 from app.exceptions import NVIDIAAPIError
@@ -200,6 +201,64 @@ class LLMAdapter:
             )
             raise ValueError(f"Failed to parse JSON response: {e}")
     
+    def _parse_solution_response(self, text: str) -> Dict[str, Any]:
+        """
+        Parse LLM solution response into solution dictionary.
+        
+        Args:
+            text: LLM response text containing solution JSON
+            
+        Returns:
+            Parsed solution dictionary
+            
+        Raises:
+            ValueError: If JSON cannot be extracted or parsed
+        """
+        json_text = text.strip()
+        
+        # Remove markdown code blocks if present
+        if "```json" in json_text:
+            json_match = re.search(r"```json\s*(\{.*?\})\s*```", json_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(1)
+        elif "```" in json_text:
+            json_match = re.search(r"```\s*(\{.*?\})\s*```", json_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(1)
+        
+        # Find JSON object
+        if not json_text.startswith("{"):
+            json_match = re.search(r"\{.*\}", json_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group(0)
+        
+        # Try to find the last closing brace to handle truncated JSON
+        if json_text.count('{') > json_text.count('}'):
+            last_brace = json_text.rfind('}')
+            if last_brace > 0:
+                json_text = json_text[:last_brace + 1]
+        
+        try:
+            solution = json.loads(json_text)
+            logger.debug("solution_response_parsed", solution_keys=list(solution.keys()))
+            return solution
+        except json.JSONDecodeError as e:
+            logger.error(
+                "solution_response_parse_failed",
+                error=str(e),
+                response_length=len(json_text),
+            )
+            # Return a minimal solution structure instead of failing
+            return {
+                "immediate_fix": {
+                    "description": text[:500],
+                    "steps": ["Review error logs", "Check configuration", "Apply fix"]
+                },
+                "code_changes": [],
+                "configuration_changes": [],
+                "prevention_measures": []
+            }
+    
     def _normalize_classification(self, classification: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize and validate classification result.
@@ -349,6 +408,69 @@ class LLMAdapter:
             
         except Exception as e:
             logger.error("llm_validate_remediation_failed", error=str(e))
+            raise
+    
+    async def generate_solution(
+        self,
+        error_log: str,
+        failure_type: str,
+        root_cause: str,
+        context: Dict[str, Any],
+        repository_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate detailed solutions for fixing the error.
+        
+        Args:
+            error_log: Error log or message
+            failure_type: Classified failure type
+            root_cause: Root cause analysis
+            context: Incident context
+            repository_code: Optional relevant code from repository
+            
+        Returns:
+            Solution dictionary with immediate_fix, code_changes, config_changes, etc.
+        """
+        prompt = build_solution_generation_prompt(
+            error_log=error_log,
+            failure_type=failure_type,
+            root_cause=root_cause,
+            context=context,
+            repository_code=repository_code,
+        )
+        
+        logger.info(
+            "llm_generate_solution_start",
+            failure_type=failure_type,
+            has_code=bool(repository_code),
+        )
+        
+        try:
+            response = await self.client.complete(
+                prompt=prompt,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            )
+            
+            text = self.client.extract_text(response)
+            solution = self._parse_solution_response(text)
+            
+            logger.info(
+                "llm_generate_solution_success",
+                failure_type=failure_type,
+                has_immediate_fix=bool(solution.get("immediate_fix")),
+                has_code_changes=bool(solution.get("code_changes")),
+                num_config_changes=len(solution.get("configuration_changes", [])),
+            )
+            return solution
+            
+        except Exception as e:
+            logger.error(
+                "llm_generate_solution_failed",
+                failure_type=failure_type,
+                error=str(e),
+                exc_info=True,
+            )
             raise
     
     async def close(self):
