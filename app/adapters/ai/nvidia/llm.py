@@ -89,16 +89,6 @@ class LLMAdapter:
             context=context,
             similar_incidents=similar_incidents,
         )
-
-        # ADD THIS TO SEE THE PROMPT
-        print(f"\n{'='*80}")
-        print("🤖 SENDING TO NVIDIA API:")
-        print(f"{'='*80}")
-        print(f"Prompt length: {len(prompt)} chars")
-        print(f"Error log length: {len(error_log)} chars")
-        print(f"\nFirst 500 chars of prompt:")
-        print(prompt[:500])
-        print(f"{'='*80}\n")
         
         logger.info(
             "llm_classify_start",
@@ -119,12 +109,6 @@ class LLMAdapter:
             # Extract text
             text = self.client.extract_text(response)
 
-            print(f"\n{'='*80}")
-            print("✅ RECEIVED FROM NVIDIA API:")
-            print(f"{'='*80}")
-            print(text)
-            print(f"{'='*80}\n")
-            
             # Parse JSON response
             classification = self._parse_classification_response(text)
             
