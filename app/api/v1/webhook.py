@@ -219,11 +219,11 @@ def extract_github_payload(payload: Dict[str, Any], event_type: str) -> Dict[str
             has_repository="repository" in payload, 
         )
 
-        logger.debug(
-            "extract_github_payload_full_payload",
-            event_type=event_type,
-            payload=json.dumps(payload, indent=2, default=str),
-        )
+        # logger.debug(
+        #     "extract_github_payload_full_payload",
+        #     event_type=event_type,
+        #     payload=json.dumps(payload, indent=2, default=str),
+        # )
 
         workflow_run = payload.get("workflow_run", {})
         repository = payload.get("repository", {})
