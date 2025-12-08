@@ -23,8 +23,7 @@ LABEL maintainer="Parth Sinha and Shine Gupta"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/home/nonroot/.local/bin:$PATH" \
-    PYTHONPATH="/app"
+    PYTHONPATH="/app:/home/nonroot/.local/lib/python3.12/site-packages"
 
 WORKDIR /app
 
@@ -40,7 +39,8 @@ COPY --from=builder --chown=nonroot:nonroot /build/app ./app
 
 EXPOSE 8000
 
-CMD ["gunicorn", "app.main:app", \
+# Use python -m to run gunicorn
+CMD ["python", "-m", "gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "4", \
      "--worker-connections", "1000", \
