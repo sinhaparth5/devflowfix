@@ -39,8 +39,7 @@ COPY --from=builder --chown=nonroot:nonroot /build/app ./app
 
 EXPOSE 8000
 
-# Use python -m to run gunicorn
-CMD ["python", "-m", "gunicorn", "app.main:app", \
+CMD ["/usr/bin/python3", "-m", "gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "4", \
      "--worker-connections", "1000", \
