@@ -25,8 +25,8 @@ class NVIDIAClient:
             self,
             api_key: Optional[str] = None,
             base_url: Optional[str] = None,
-            timeout: Optional[str] = None,
-            max_retries: Optional[str] = None,
+            timeout: Optional[int] = None,
+            max_retries: Optional[int] = None,
     ):
         """
         Initialize NVIDIA API client.
