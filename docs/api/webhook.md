@@ -1181,3 +1181,441 @@ async def webhook_health():
 - [Securing Webhooks](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)
 - [Webhook Event Payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads)
 - [Best Practices](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)
+
+---
+
+## Webhook Secret Management API
+
+DevFlowFix provides dedicated API endpoints for authenticated users to manage their GitHub webhook secrets. These endpoints allow users to generate webhook secrets and retrieve their webhook configuration details.
+
+### Authentication
+
+Both endpoints require authentication using a valid access token (JWT Bearer token).
+
+```bash
+Authorization: Bearer <your_access_token>
+```
+
+---
+
+## API Endpoints
+
+### 1. Generate Webhook Secret
+
+**Endpoint:** `POST /api/v1/webhook/secret/generate/me`
+
+**Description:** Generate a new cryptographically secure webhook secret for the authenticated user. This endpoint creates a 256-bit random secret and provides complete GitHub webhook setup instructions.
+
+**Authentication:** Required (Bearer token)
+
+**Request:**
+```bash
+curl -X POST "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/generate/me" \
+  -H "Authorization: Bearer <your_access_token>" \
+  -H "Content-Type: application/json"
+```
+
+**Response:** `201 Created`
+
+```json
+{
+  "success": true,
+  "message": "Webhook secret generated successfully",
+  "user": {
+    "user_id": "dev_abc123xyz456",
+    "email": "user@example.com",
+    "full_name": "John Doe"
+  },
+  "webhook_secret": "xyzABC123def456GHI789jkl012MNO345pqr678STU901vwx234YZA567bcd890EFG",
+  "webhook_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+  "secret_length": 64,
+  "algorithm": "HMAC-SHA256",
+  "created_at": "2025-12-13T20:30:00.000000Z",
+  "github_configuration": {
+    "payload_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+    "content_type": "application/json",
+    "secret": "xyzABC123def456GHI789jkl012MNO345pqr678STU901vwx234YZA567bcd890EFG",
+    "ssl_verification": "Enable SSL verification",
+    "events": [
+      "workflow_run",
+      "check_run"
+    ],
+    "active": true
+  },
+  "setup_instructions": {
+    "step_1": {
+      "action": "Copy your webhook secret",
+      "value": "xyzABC123def456GHI789jkl012MNO345pqr678STU901vwx234YZA567bcd890EFG",
+      "note": "Save this secret now - it will not be shown again"
+    },
+    "step_2": {
+      "action": "Go to your GitHub repository",
+      "url": "https://github.com/YOUR_ORG/YOUR_REPO/settings/hooks"
+    },
+    "step_3": {
+      "action": "Click 'Add webhook'"
+    },
+    "step_4": {
+      "action": "Configure webhook settings",
+      "payload_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+      "content_type": "application/json",
+      "secret": "xyzABC123def456GHI789jkl012MNO345pqr678STU901vwx234YZA567bcd890EFG"
+    },
+    "step_5": {
+      "action": "Select events",
+      "individual_events": [
+        "Workflow runs",
+        "Check runs"
+      ],
+      "note": "Uncheck 'Just the push event' and select individual events"
+    },
+    "step_6": {
+      "action": "Ensure 'Active' is checked"
+    },
+    "step_7": {
+      "action": "Click 'Add webhook'"
+    }
+  },
+  "test_configuration": {
+    "description": "Test your webhook configuration",
+    "curl_command": "curl -X POST \"https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Hub-Signature-256: sha256=<signature>\" \\\n  -H \"X-GitHub-Event: workflow_run\" \\\n  -d '{\"action\":\"completed\",\"workflow_run\":{\"conclusion\":\"failure\"}}'",
+    "generate_test_signature": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/test/me"
+  }
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Operation status |
+| `message` | string | Success message |
+| `user.user_id` | string | User's unique identifier |
+| `user.email` | string | User's email address |
+| `user.full_name` | string | User's full name |
+| `webhook_secret` | string | **IMPORTANT:** The generated webhook secret (shown only once) |
+| `webhook_url` | string | User-specific webhook endpoint URL |
+| `secret_length` | integer | Length of the generated secret |
+| `algorithm` | string | Signature algorithm (HMAC-SHA256) |
+| `created_at` | string | ISO 8601 timestamp |
+| `github_configuration` | object | Ready-to-use GitHub webhook configuration |
+| `setup_instructions` | object | Step-by-step setup guide |
+| `test_configuration` | object | Testing instructions and examples |
+
+**Important Notes:**
+
+⚠️ **Security Warning:** The `webhook_secret` is shown only once and cannot be retrieved later. Save it immediately in a secure location.
+
+🔄 **Regeneration:** Calling this endpoint again will generate a new secret and invalidate the previous one.
+
+---
+
+### 2. Get Webhook Configuration Info
+
+**Endpoint:** `GET /api/v1/webhook/secret/info/me`
+
+**Description:** Retrieve the current webhook configuration for the authenticated user, including webhook URL, configuration status, and setup details.
+
+**Authentication:** Required (Bearer token)
+
+**Request:**
+```bash
+curl -X GET "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/info/me" \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+**Response:** `200 OK`
+
+**When Secret is Configured:**
+```json
+{
+  "user": {
+    "user_id": "dev_abc123xyz456",
+    "email": "user@example.com",
+    "full_name": "John Doe"
+  },
+  "webhook_configuration": {
+    "secret_configured": true,
+    "secret_preview": "xyzA...G890",
+    "secret_length": 64,
+    "webhook_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+    "last_updated": "2025-12-13T20:30:00.000000Z"
+  },
+  "github_settings": {
+    "payload_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+    "content_type": "application/json",
+    "events": [
+      "workflow_run",
+      "check_run"
+    ],
+    "ssl_verification": "enabled"
+  },
+  "status": {
+    "ready": true,
+    "message": "Webhook configured and ready"
+  },
+  "actions": {
+    "generate_new_secret": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/generate/me",
+    "test_signature": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/test/me",
+    "webhook_endpoint": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456"
+  }
+}
+```
+
+**When Secret is NOT Configured:**
+```json
+{
+  "user": {
+    "user_id": "dev_abc123xyz456",
+    "email": "user@example.com",
+    "full_name": "John Doe"
+  },
+  "webhook_configuration": {
+    "secret_configured": false,
+    "secret_preview": null,
+    "secret_length": 0,
+    "webhook_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+    "last_updated": null
+  },
+  "github_settings": {
+    "payload_url": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456",
+    "content_type": "application/json",
+    "events": [
+      "workflow_run",
+      "check_run"
+    ],
+    "ssl_verification": "enabled"
+  },
+  "status": {
+    "ready": false,
+    "message": "No webhook secret configured - generate one first"
+  },
+  "actions": {
+    "generate_new_secret": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/generate/me",
+    "test_signature": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/test/me",
+    "webhook_endpoint": "https://devflowfix-new-production.up.railway.app/api/v1/webhook/github/dev_abc123xyz456"
+  }
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user.user_id` | string | User's unique identifier |
+| `user.email` | string | User's email address |
+| `user.full_name` | string | User's full name |
+| `webhook_configuration.secret_configured` | boolean | Whether a webhook secret exists |
+| `webhook_configuration.secret_preview` | string/null | Masked preview of the secret (e.g., "xyzA...G890") |
+| `webhook_configuration.secret_length` | integer | Length of the secret |
+| `webhook_configuration.webhook_url` | string | User-specific webhook endpoint |
+| `webhook_configuration.last_updated` | string/null | ISO 8601 timestamp of last update |
+| `github_settings` | object | GitHub webhook configuration parameters |
+| `status.ready` | boolean | Whether webhook is ready to use |
+| `status.message` | string | Human-readable status message |
+| `actions` | object | URLs for available actions |
+
+---
+
+## Usage Examples
+
+### Complete Workflow: Setup GitHub Webhook
+
+**Step 1: Authenticate and Login**
+```bash
+# Login to get access token
+curl -X POST "https://devflowfix-new-production.up.railway.app/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "your_password"
+  }'
+
+# Save the access_token from response
+export ACCESS_TOKEN="<your_access_token>"
+```
+
+**Step 2: Generate Webhook Secret**
+```bash
+curl -X POST "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/generate/me" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+**Step 3: Save the Secret**
+```bash
+# Copy the webhook_secret from the response and save it securely
+export WEBHOOK_SECRET="<webhook_secret_from_response>"
+export WEBHOOK_URL="<webhook_url_from_response>"
+```
+
+**Step 4: Configure GitHub Webhook**
+
+1. Go to your GitHub repository
+2. Navigate to **Settings** → **Webhooks** → **Add webhook**
+3. Configure:
+   - **Payload URL:** `<webhook_url_from_response>`
+   - **Content type:** `application/json`
+   - **Secret:** `<webhook_secret_from_response>`
+   - **SSL verification:** Enable SSL verification
+   - **Events:** Select "Let me select individual events"
+     - ✅ Workflow runs
+     - ✅ Check runs
+   - **Active:** ✅ Checked
+4. Click **Add webhook**
+
+**Step 5: Verify Configuration**
+```bash
+curl -X GET "https://devflowfix-new-production.up.railway.app/api/v1/webhook/secret/info/me" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+---
+
+## Error Responses
+
+### 401 Unauthorized
+```json
+{
+  "detail": "Authentication required"
+}
+```
+
+**Cause:** Missing or invalid access token
+
+**Solution:** Login and provide a valid Bearer token
+
+### 403 Forbidden
+```json
+{
+  "detail": "User account is disabled"
+}
+```
+
+**Cause:** User account is inactive
+
+**Solution:** Contact support to activate your account
+
+---
+
+## Best Practices
+
+### Security Recommendations
+
+1. **Secure Secret Storage**
+   - Never commit webhook secrets to version control
+   - Store secrets in environment variables or secure vaults
+   - Use secret management services (AWS Secrets Manager, HashiCorp Vault, etc.)
+
+2. **Secret Rotation**
+   - Rotate webhook secrets every 90 days
+   - Update GitHub webhook configuration after rotation
+   - Monitor webhook delivery logs for signature failures
+
+3. **Access Control**
+   - Use separate webhook secrets for each repository
+   - Implement least privilege access for webhook endpoints
+   - Monitor webhook access logs for anomalies
+
+### Workflow Automation
+
+**Python Script for Secret Rotation:**
+```python
+import requests
+import os
+
+# Configuration
+API_BASE_URL = "https://devflowfix-new-production.up.railway.app/api/v1"
+ACCESS_TOKEN = os.getenv("DEVFLOWFIX_ACCESS_TOKEN")
+
+headers = {
+    "Authorization": f"Bearer {ACCESS_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+def rotate_webhook_secret():
+    """Generate new webhook secret and update GitHub."""
+
+    # Generate new secret
+    response = requests.post(
+        f"{API_BASE_URL}/webhook/secret/generate/me",
+        headers=headers
+    )
+
+    if response.status_code == 201:
+        data = response.json()
+
+        print(f"✅ New webhook secret generated!")
+        print(f"Secret: {data['webhook_secret']}")
+        print(f"Webhook URL: {data['webhook_url']}")
+        print(f"\nNext steps:")
+        print("1. Update GitHub webhook configuration with new secret")
+        print("2. Test webhook delivery")
+
+        return data
+    else:
+        print(f"❌ Error: {response.status_code}")
+        print(response.json())
+        return None
+
+def check_webhook_status():
+    """Check current webhook configuration."""
+
+    response = requests.get(
+        f"{API_BASE_URL}/webhook/secret/info/me",
+        headers=headers
+    )
+
+    if response.status_code == 200:
+        data = response.json()
+
+        print(f"User: {data['user']['email']}")
+        print(f"Secret Configured: {data['webhook_configuration']['secret_configured']}")
+        print(f"Webhook Ready: {data['status']['ready']}")
+        print(f"Webhook URL: {data['webhook_configuration']['webhook_url']}")
+
+        return data
+    else:
+        print(f"❌ Error: {response.status_code}")
+        print(response.json())
+        return None
+
+if __name__ == "__main__":
+    # Check current status
+    print("Checking webhook status...")
+    check_webhook_status()
+
+    # Rotate secret
+    print("\nRotating webhook secret...")
+    rotate_webhook_secret()
+```
+
+---
+
+## FAQ
+
+**Q: Can I view my existing webhook secret?**
+A: No, for security reasons, the full secret is only shown once when generated. You can only see a masked preview (first 4 and last 4 characters).
+
+**Q: What happens if I generate a new secret?**
+A: The old secret is immediately invalidated. You must update your GitHub webhook configuration with the new secret for webhooks to continue working.
+
+**Q: How do I know if my webhook is working?**
+A:
+1. Use the `/webhook/secret/info/me` endpoint to check configuration status
+2. Check GitHub's webhook delivery logs in your repository settings
+3. Trigger a test workflow and monitor for incidents in DevFlowFix
+
+**Q: Can I use the same secret for multiple repositories?**
+A: While technically possible, it's not recommended. Each user has one webhook URL with one secret that can be used across repositories, but for better isolation and security, consider using separate user accounts for different repositories.
+
+**Q: What if I lose my webhook secret?**
+A: Simply generate a new one using `POST /api/v1/webhook/secret/generate/me` and update your GitHub webhook configuration.
+
+---
+
+## Related Documentation
+
+- [GitHub Webhook Integration Guide](#github-webhook-integration)
+- [Authentication API](./authentication.md)
+- [Webhook Testing Guide](#testing)
