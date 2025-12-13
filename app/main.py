@@ -311,6 +311,7 @@ async def root():
             "webhooks": "/api/v1/webhook",
             "analytics": "/api/v1/analytics",
             "incidents": "/api/v1/incidents",
+            "user_details": "/api/v1/user-details",
         },
     }
 
@@ -319,6 +320,7 @@ from app.api.v1.webhook import router as webhook_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.incidents import router as incidents_router
+from app.api.v1.user_details import router as user_details_router
 
 app.include_router(
     auth_router,
@@ -344,6 +346,12 @@ app.include_router(
     tags=["Analytics"],
 )
 
+app.include_router(
+    user_details_router,
+    prefix="/api/v1",
+    tags=["User Details"],
+)
+
 logger.info(
     "routers_registered",
     routers=[
@@ -351,6 +359,7 @@ logger.info(
         "/api/v1/incidents",
         "/api/v1/webhook",
         "/api/v1/analytics",
+        "/api/v1/user-details",
     ],
     webhook_endpoints=[
         "/api/v1/webhook/github/{user_id}",

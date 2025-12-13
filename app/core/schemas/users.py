@@ -326,3 +326,31 @@ class AuditLogListResponse(BaseModel):
     skip: int
     limit: int
     has_more: bool
+
+
+# User Details Schemas
+
+class UserDetailsBase(BaseModel):
+    """Base user details schema with common fields."""
+    country: Optional[str] = Field(None, max_length=100, description="Country")
+    city: Optional[str] = Field(None, max_length=100, description="City")
+    postal_code: Optional[str] = Field(None, max_length=20, description="Postal code")
+    facebook_link: Optional[str] = Field(None, max_length=500, description="Facebook profile link")
+    twitter_link: Optional[str] = Field(None, max_length=500, description="Twitter profile link")
+    linkedin_link: Optional[str] = Field(None, max_length=500, description="LinkedIn profile link")
+    instagram_link: Optional[str] = Field(None, max_length=500, description="Instagram profile link")
+    github_link: Optional[str] = Field(None, max_length=500, description="GitHub profile link")
+
+
+class UserDetailsUpdate(UserDetailsBase):
+    """Schema for updating user details."""
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserDetailsResponse(UserDetailsBase):
+    """Schema for user details in API responses."""
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
