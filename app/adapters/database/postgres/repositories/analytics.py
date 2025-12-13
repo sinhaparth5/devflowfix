@@ -3,7 +3,7 @@
 
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import select, func, desc, and_, or_, case, text
+from sqlalchemy import select, func, desc, and_, or_, case, text, cast, String
 from sqlalchemy.orm import Session
 import structlog
 
@@ -435,25 +435,25 @@ class AnalyticsRepository:
     ) -> List[Dict[str, Any]]:
         try:
             query = self.session.query(
-                IncidentTable.context['repository'].astext.label('repository'),
+                cast(IncidentTable.context['repository'], String).label('repository'),
                 func.count(IncidentTable.incident_id).label('count'),
             ).filter(
                 IncidentTable.context['repository'].isnot(None)
             )
-            
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
                 query = query.filter(IncidentTable.created_at <= end_date)
-            
+
             results = query.group_by(
-                IncidentTable.context['repository'].astext
+                cast(IncidentTable.context['repository'], String)
             ).order_by(
                 desc('count')
             ).limit(limit).all()
-            
+
             return [{"repository": repo, "count": count} for repo, count in results if repo]
-            
+
         except Exception as e:
             logger.error("get_top_repositories_failed", error=str(e))
             raise

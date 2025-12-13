@@ -4,7 +4,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select, and_, or_, func, desc
+from sqlalchemy import select, and_, or_, func, desc, cast, String
 import structlog
 
 from app.adapters.database.postgres.models import IncidentTable
@@ -209,15 +209,15 @@ class IncidentRepository:
             query = query.filter(IncidentTable.confidence <= filters["max_confidence"])
         if filters.get("repository"):
             query = query.filter(
-                IncidentTable.context["repository"].astext == filters["repository"]
+                cast(IncidentTable.context["repository"], String) == filters["repository"]
             )
         if filters.get("namespace"):
             query = query.filter(
-                IncidentTable.context["namespace"].astext == filters["namespace"]
+                cast(IncidentTable.context["namespace"], String) == filters["namespace"]
             )
         if filters.get("service"):
             query = query.filter(
-                IncidentTable.context["service"].astext == filters["service"]
+                cast(IncidentTable.context["service"], String) == filters["service"]
             )
 
         return query
