@@ -11,6 +11,7 @@ from app.adapters.database.postgres.repositories.config import ConfigRepository
 from app.adapters.database.postgres.repositories.vector import VectorRepository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
 from app.adapters.database.postgres.repositories.users import UserRepository, SessionRepository, AuditLogRepository
+from app.adapters.database.postgres.repositories.user_details import UserDetailsRepository
 
 __all__ = [
     "AnalyticsRepository",
@@ -22,5 +23,6 @@ __all__ = [
     "VectorRepository",
     "UserRepository",
     "SessionRepository",
-    "AuditLogRepository"
+    "AuditLogRepository",
+    "UserDetailsRepository"
 ]

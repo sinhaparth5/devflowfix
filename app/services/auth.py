@@ -287,7 +287,7 @@ class AuthService:
 
         # Create user
         user = UserTable(
-            user_id=f"usr_{uuid4().hex[:12]}",
+            user_id=f"dev_{uuid4().hex[:12]}",
             email=user_data.email.lower(),
             hashed_password=self.hash_password(user_data.password),
             full_name=user_data.full_name,

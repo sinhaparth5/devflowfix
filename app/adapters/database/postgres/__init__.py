@@ -6,7 +6,8 @@ from .models import (
     ConfigTable,
     UserSessionTable,
     UserTable,
-    AuditLogTable
+    AuditLogTable,
+    UserDetailsTable
 )
 
 from .connection import (
@@ -30,6 +31,7 @@ __all__ = [
     "UserSessionTable",
     "UserTable",
     "AuditLogTable",
+    "UserDetailsTable",
     "IncidentTable",
     "FeedbackTable",
     "RemediationHistoryTable",

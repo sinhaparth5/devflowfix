@@ -386,3 +386,39 @@ class ConfigTable(SQLModel, table=True):
     # Flags
     is_secret: bool = Field(default=False)  # Should be encrypted
     is_system: bool = Field(default=False)  # System config, not user-editable
+
+class UserDetailsTable(SQLModel, table=True):
+    """
+    User details table.
+
+    Stores additional user profile information and social links.
+    """
+
+    __tablename__ = "user_details"
+
+    # Primary Key
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        primary_key=True,
+        max_length=50
+    )
+
+    # Location Information
+    country: Optional[str] = Field(default=None, max_length=100)
+    city: Optional[str] = Field(default=None, max_length=100)
+    postal_code: Optional[str] = Field(default=None, max_length=20)
+
+    # Social Media Links
+    facebook_link: Optional[str] = Field(default=None, max_length=500)
+    twitter_link: Optional[str] = Field(default=None, max_length=500)
+    linkedin_link: Optional[str] = Field(default=None, max_length=500)
+    instagram_link: Optional[str] = Field(default=None, max_length=500)
+    github_link: Optional[str] = Field(default=None, max_length=500)
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_user_details_country_city', 'country', 'city'),
+    )
