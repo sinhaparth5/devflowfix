@@ -475,11 +475,13 @@ class AuthService:
         new_access_token = self.create_access_token(user, session_id)
         new_refresh_token, new_refresh_hash = self.create_refresh_token(user, session_id)
 
-        # Update session with new refresh token hash
+        # Update session with new refresh token hash and extend expiration
         session = self.session_repo.get_by_id(session_id)
         if session:
             session.refresh_token_hash = new_refresh_hash
             session.last_used_at = datetime.now(timezone.utc)
+            # Extend session expiration when tokens are refreshed
+            session.expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
             self.session_repo.db.commit()
 
         self._log_audit(
