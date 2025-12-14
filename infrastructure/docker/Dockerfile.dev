@@ -34,17 +34,8 @@ COPY --from=builder /usr/lib/libpq.so* /usr/lib/
 COPY --from=builder /usr/lib/postgresql* /usr/lib/
 
 # Copy installed packages and compiled app with read-only permissions
-COPY --from=builder --chown=nonroot:nonroot /home/nonroot/.local /home/nonroot/.local
-COPY --from=builder --chown=nonroot:nonroot /build/app ./app
-
-# Remove write permissions from all copied files for security
-USER root
-RUN chmod -R a-w /home/nonroot/.local /app && \
-    find /home/nonroot/.local -type d -exec chmod 555 {} \; && \
-    find /home/nonroot/.local -type f -exec chmod 444 {} \; && \
-    find /app -type d -exec chmod 555 {} \; && \
-    find /app -type f -exec chmod 444 {} \;
-USER nonroot
+COPY --from=builder --chown=nonroot:nonroot --chmod=555 /home/nonroot/.local /home/nonroot/.local
+COPY --from=builder --chown=nonroot:nonroot --chmod=555 /build/app ./app
 
 EXPOSE 8000
 
