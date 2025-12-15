@@ -9,8 +9,9 @@ REST API for managing automated PR creation and tracking.
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Query, Depends, status
+from fastapi import APIRouter, HTTPException, Query, Depends, status as http_status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import structlog
 
 from app.dependencies import get_db
@@ -94,7 +95,7 @@ async def register_github_token(
             error=str(e),
         )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to register token: {str(e)}",
         )
 
@@ -137,7 +138,7 @@ async def list_github_tokens(
     except Exception as e:
         logger.error("token_list_error", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list tokens: {str(e)}",
         )
 
@@ -166,7 +167,7 @@ async def deactivate_github_token(
         
         if not success:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"Token not found: {token_id}",
             )
         
@@ -182,7 +183,7 @@ async def deactivate_github_token(
     except Exception as e:
         logger.error("token_deactivation_error", token_id=token_id, error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deactivate token: {str(e)}",
         )
 
@@ -272,7 +273,7 @@ async def list_pull_requests(
     except Exception as e:
         logger.error("pull_requests_list_error", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list pull requests: {str(e)}",
         )
 
@@ -291,10 +292,10 @@ async def get_pull_request_details(
     
     try:
         pr = db.query(PullRequestTable).filter(PullRequestTable.id == pr_id).first()
-        
+
         if not pr:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"PR not found: {pr_id}",
             )
         
@@ -336,7 +337,7 @@ async def get_pull_request_details(
     except Exception as e:
         logger.error("pull_request_details_error", pr_id=pr_id, error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve PR details: {str(e)}",
         )
 
@@ -361,10 +362,10 @@ async def update_pr_status(
     
     try:
         pr = db.query(PullRequestTable).filter(PullRequestTable.id == pr_id).first()
-        
+
         if not pr:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"PR not found: {pr_id}",
             )
         
@@ -373,7 +374,7 @@ async def update_pr_status(
             status_enum = PRStatus(new_status)
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status: {new_status}",
             )
         
@@ -413,7 +414,7 @@ async def update_pr_status(
             error=str(e),
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update PR status: {str(e)}",
         )
 
@@ -437,26 +438,26 @@ async def get_pr_statistics(
         total_prs = db.query(PullRequestTable).count()
         
         status_counts = {}
-        for status in PRStatus:
+        for pr_status in PRStatus:
             count = db.query(PullRequestTable).filter(
-                PullRequestTable.status == status
+                PullRequestTable.status == pr_status
             ).count()
-            status_counts[status.value] = count
+            status_counts[pr_status.value] = count
         
         merged_prs = db.query(PullRequestTable).filter(
             PullRequestTable.status == PRStatus.MERGED
         ).count()
         
         avg_files_changed = db.query(
-            db.func.avg(PullRequestTable.files_changed)
+            func.avg(PullRequestTable.files_changed)
         ).scalar() or 0
-        
+
         total_additions = db.query(
-            db.func.sum(PullRequestTable.additions)
+            func.sum(PullRequestTable.additions)
         ).scalar() or 0
-        
+
         total_deletions = db.query(
-            db.func.sum(PullRequestTable.deletions)
+            func.sum(PullRequestTable.deletions)
         ).scalar() or 0
         
         logger.info(
@@ -481,6 +482,6 @@ async def get_pr_statistics(
     except Exception as e:
         logger.error("pr_statistics_error", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve statistics: {str(e)}",
         )
