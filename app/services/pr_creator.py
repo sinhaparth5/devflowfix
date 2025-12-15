@@ -3,43 +3,93 @@
 
 """
 Automated PR Creator Service
+
+Creates and tracks automated fix pull requests in source repositories.
+Uses per-repository GitHub tokens for secure access.
 """
 
 from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
+from uuid import uuid4
 import structlog
 
 from app.core.models.incident import Incident
 from app.core.models.analysis import AnalysisResult
 from app.adapters.external.github.client import GitHubClient
+from app.adapters.database.postgres.models import (
+    PullRequestTable,
+    PRCreationLogTable,
+    PRStatus,
+)
+from app.services.github_token_manager import GitHubTokenManager
 from app.core.enums import FailureType
 
 logger = structlog.get_logger(__name__)
 
 class PRCreatorService:
     """
-    Service for creating automated fix pull requests
+    Service for creating automated fix pull requests.
 
-    Analyzes AI-generated solutions and creates PRs with:
-        - Code changes
-        - Configuration updates
-        - Detailed explanation
-        - Prevention measures
+    Creates PRs in source repositories with:
+    - Code changes from NVIDIA AI analysis
+    - Configuration updates
+    - Detailed explanations
+    - Prevention measures
+
+    Features:
+    - Per-repository GitHub token support
+    - PR metadata tracking in database
+    - Creation audit logging
+    - Automatic branch management
+
+    Example:
+        ```python
+        service = PRCreatorService()
+        
+        pr_result = await service.create_fix_pr(
+            incident=incident,
+            analysis=analysis,
+            solution=solution,
+        )
+        
+        print(f"PR created: {pr_result['pr_url']}")
+        ```
     """
     def __init__(self, github_client: Optional[GitHubClient] = None):
         """
         Initialize PR creator service.
         
         Args:
-            github_client: GitHub API client
+            github_client: GitHub API client (optional, uses token manager)
         """
-        self.github = github_client or GitHubClient()
+        self.github = github_client
+        self.token_manager = GitHubTokenManager()
+        self._db_session = None
 
     async def create_fix_pr(
             self,
             incident: Incident,
             analysis: AnalysisResult,
             solution: Dict[str, Any],
+            db_session=None,
     ) -> Dict[str, Any]:
+        """
+        Create an automated fix PR in the source repository.
+        
+        Args:
+            incident: Incident details with repo information
+            analysis: AI analysis result with root cause and fixability
+            solution: NVIDIA AI-generated solution with code changes
+            db_session: Database session for tracking
+        
+        Returns:
+            PR result with metadata
+        
+        Raises:
+            ValueError: If repository information not found
+        """
+        from app.dependencies import get_db
+        
         repo_info = self._extract_repo_info(incident)
         if not repo_info:
             raise ValueError("Cannot create PR: repository info not found")
@@ -47,6 +97,17 @@ class PRCreatorService:
         owner = repo_info["owner"]
         repo = repo_info["repo"]
         base_branch = repo_info.get("branch", "main")
+        
+        # Get repo-specific GitHub token
+        token = self.token_manager.get_token(owner, repo)
+        if not token:
+            raise ValueError(
+                f"No GitHub token found for {owner}/{repo}. "
+                "Please register the token via /api/v1/pr-management/tokens/register"
+            )
+        
+        # Create authenticated GitHub client for this repo
+        github_client = GitHubClient(token=token)
 
         logger.info(
             "pr_creation_start",
@@ -54,50 +115,155 @@ class PRCreatorService:
             owner=owner,
             repo=repo,
             failure_type=analysis.category.value,
+            confidence=analysis.confidence,
         )
 
-        branch_name = self._generate_branch_name(incident, analysis)
-        await self._create_branch(owner, repo, base_branch, branch_name)
+        creation_log_id = f"log_{uuid4()}"
+        start_time = datetime.now(timezone.utc)
+        
+        try:
+            branch_name = self._generate_branch_name(incident, analysis)
+            await self._create_branch(
+                github_client, owner, repo, base_branch, branch_name
+            )
 
-        changed_files = await self._apply_code_changes(
-            owner=owner,
-            repo=repo,
-            branch=branch_name,
-            code_changes=solution.get("code_changes", []),
-        )
+            changed_files = await self._apply_code_changes(
+                github_client=github_client,
+                owner=owner,
+                repo=repo,
+                branch=branch_name,
+                code_changes=solution.get("code_changes", []),
+            )
 
-        config_files = await self._apply_config_changes(
-            owner=owner,
-            repo=repo,
-            branch=branch_name,
-            config_changes=solution.get("configuration_changes", []),
-        )
+            config_files = await self._apply_config_changes(
+                github_client=github_client,
+                owner=owner,
+                repo=repo,
+                branch=branch_name,
+                config_changes=solution.get("configuration_changes", []),
+            )
 
-        pr_title = self._generate_pr_title(analysis)
-        pr_body = self._generate_pr_body(
-            incident=incident,
-            analysis=analysis,
-            solution=solution,
-            changed_files=changed_files + config_files,
-        )
+            pr_title = self._generate_pr_title(analysis)
+            pr_body = self._generate_pr_body(
+                incident=incident,
+                analysis=analysis,
+                solution=solution,
+                changed_files=changed_files + config_files,
+            )
 
-        pr_result = await self.github.create_pull_request(
-            owner=owner,
-            repo=repo,
-            title=pr_title,
-            body=pr_body,
-            head=branch_name,
-            base=base_branch,
-        )
+            pr_result = await github_client.create_pull_request(
+                owner=owner,
+                repo=repo,
+                title=pr_title,
+                body=pr_body,
+                head=branch_name,
+                base=base_branch,
+            )
 
-        logger.info(
-            "pr_created_success",
-            incident_id=incident.incident_id,
-            pr_number=pr_result["number"],
-            pr_url=pr_result["html_url"],
-        )
+            # Store PR metadata in database
+            db = db_session or next(get_db())
+            
+            pr_id = f"pr_{uuid4()}"
+            
+            pr_record = PullRequestTable(
+                id=pr_id,
+                incident_id=incident.incident_id,
+                repository_owner=owner,
+                repository_name=repo,
+                repository_full=f"{owner}/{repo}",
+                pr_number=pr_result["number"],
+                pr_url=pr_result["html_url"],
+                branch_name=branch_name,
+                base_branch=base_branch,
+                title=pr_title,
+                description=pr_body,
+                status=PRStatus.CREATED,
+                files_changed=len(changed_files + config_files),
+                failure_type=analysis.category.value if analysis.category else "unknown",
+                root_cause=analysis.root_cause,
+                confidence_score=analysis.confidence,
+                metadata={
+                    "incident_id": incident.incident_id,
+                    "created_by": "devflowfix",
+                    "version": "1.0",
+                },
+            )
+            
+            db.add(pr_record)
+            
+            # Log creation attempt
+            creation_log = PRCreationLogTable(
+                id=creation_log_id,
+                incident_id=incident.incident_id,
+                pr_id=pr_id,
+                repository_full=f"{owner}/{repo}",
+                branch_name=branch_name,
+                failure_type=analysis.category.value if analysis.category else "unknown",
+                root_cause=analysis.root_cause,
+                files_to_change=len(changed_files + config_files),
+                status="success",
+                duration_ms=int(
+                    (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                ),
+                pr_url=pr_result["html_url"],
+            )
+            
+            db.add(creation_log)
+            db.commit()
 
-        return pr_result
+            logger.info(
+                "pr_created_success",
+                incident_id=incident.incident_id,
+                pr_id=pr_id,
+                pr_number=pr_result["number"],
+                pr_url=pr_result["html_url"],
+                files_changed=len(changed_files + config_files),
+            )
+
+            return {
+                **pr_result,
+                "pr_id": pr_id,
+                "files_changed": changed_files + config_files,
+                "timestamp": start_time.isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(
+                "pr_creation_failed",
+                incident_id=incident.incident_id,
+                owner=owner,
+                repo=repo,
+                error=str(e),
+                exc_info=True,
+            )
+            
+            # Log failed attempt
+            try:
+                db = db_session or next(get_db())
+                
+                creation_log = PRCreationLogTable(
+                    id=creation_log_id,
+                    incident_id=incident.incident_id,
+                    pr_id=None,
+                    repository_full=f"{owner}/{repo}",
+                    branch_name=self._generate_branch_name(incident, analysis),
+                    failure_type=analysis.category.value if analysis.category else "unknown",
+                    root_cause=analysis.root_cause,
+                    files_to_change=len(solution.get("code_changes", [])),
+                    status="failed",
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    ),
+                    error_message=str(e),
+                    error_type=type(e).__name__,
+                )
+                
+                db.add(creation_log)
+                db.commit()
+            except Exception as log_error:
+                logger.error("failed_to_log_pr_creation_error", error=str(log_error))
+            
+            raise
     
     def _extract_repo_info(self, incident: Incident) -> Optional[Dict[str, str]]:
         """Extract owner/repo from incident context."""
@@ -127,16 +293,17 @@ class PRCreatorService:
     
     async def _create_branch(
             self,
+            github_client: GitHubClient,
             owner: str,
             repo: str,
             base_branch: str,
             new_branch: str,
     ):
         """Create new branch from base."""
-        base_ref = await self.github.get_ref(owner, repo, f"heads/{base_branch}")
+        base_ref = await github_client.get_ref(owner, repo, f"heads/{base_branch}")
         base_sha = base_ref["object"]["sha"]
 
-        await self.github.create_ref(
+        await github_client.create_ref(
             owner=owner,
             repo=repo,
             ref=f"refs/heads/{new_branch}",
@@ -152,12 +319,13 @@ class PRCreatorService:
 
     async def _apply_code_changes(
             self,
+            github_client: GitHubClient,
             owner: str,
             repo: str,
             branch: str,
             code_changes: List[Dict[str, Any]],
     ) -> List[str]:
-        """Apply code changes to files"""
+        """Apply code changes to files."""
         changed_files = []
 
         for change in code_changes:
@@ -169,7 +337,7 @@ class PRCreatorService:
 
             try:
                 try:
-                    current_file = await self.github.get_file_contents(
+                    current_file = await github_client.get_file_contents(
                         owner=owner,
                         repo=repo,
                         path=file_path,
@@ -179,7 +347,7 @@ class PRCreatorService:
                 except:
                     sha = None
 
-                await self.github.create_or_update_file(
+                await github_client.create_or_update_file(
                     owner=owner,
                     repo=repo,
                     path=file_path,
@@ -208,6 +376,7 @@ class PRCreatorService:
     
     async def _apply_config_changes(
             self,
+            github_client: GitHubClient,
             owner: str,
             repo: str,
             branch: str,
@@ -218,6 +387,55 @@ class PRCreatorService:
 
         for change in config_changes:
             file_path = change.get("file")
+            
+            if not file_path:
+                continue
+            
+            try:
+                try:
+                    current_file = await github_client.get_file_contents(
+                        owner=owner,
+                        repo=repo,
+                        path=file_path,
+                        ref=branch,
+                    )
+                    sha = current_file["sha"]
+                except:
+                    sha = None
+                
+                # Use recommended value for config
+                new_value = change.get("recommended_value", change.get("value", ""))
+                
+                config_content = f"{change.get('setting', 'config')}: {new_value}\n"
+                
+                await github_client.create_or_update_file(
+                    owner=owner,
+                    repo=repo,
+                    path=file_path,
+                    message=f"config: {change.get('reason', 'Update configuration')}",
+                    context=config_content,
+                    branch=branch,
+                    sha=sha,
+                )
+                
+                changed_files.append(file_path)
+                
+                logger.info(
+                    "config_change_applied",
+                    owner=owner,
+                    repo=repo,
+                    file=file_path,
+                    setting=change.get('setting'),
+                )
+                
+            except Exception as e:
+                logger.error(
+                    "config_change_failed",
+                    file=file_path,
+                    error=str(e),
+                )
+        
+        return changed_files
 
 
     def _generate_pr_title(self, analysis: AnalysisResult) -> str:

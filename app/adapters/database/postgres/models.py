@@ -386,3 +386,197 @@ class ConfigTable(SQLModel, table=True):
     # Flags
     is_secret: bool = Field(default=False)  # Should be encrypted
     is_system: bool = Field(default=False)  # System config, not user-editable
+
+
+# ============================================================================
+# PR Management Models
+# ============================================================================
+
+import enum
+
+
+class PRStatus(str, enum.Enum):
+    """Status of an automated PR."""
+    CREATED = "created"
+    OPEN = "open"
+    DRAFT = "draft"
+    REVIEW_REQUESTED = "review_requested"
+    APPROVED = "approved"
+    MERGED = "merged"
+    CLOSED = "closed"
+    FAILED = "failed"
+
+
+class PullRequestTable(SQLModel, table=True):
+    """
+    Stores metadata for automatically created pull requests.
+    
+    Tracks:
+    - PR creation details
+    - Incident association
+    - Status and lifecycle
+    - Review/merge progress
+    """
+    __tablename__ = "pull_requests"
+
+    id: str = Field(primary_key=True, max_length=36)
+    incident_id: str = Field(index=True, max_length=36)
+    
+    # Repository info
+    repository_owner: str = Field(index=True, max_length=255)
+    repository_name: str = Field(index=True, max_length=255)
+    repository_full: str = Field(max_length=512)  # "owner/repo"
+    
+    # PR details from GitHub
+    pr_number: int
+    pr_url: str = Field(max_length=512)
+    branch_name: str = Field(max_length=255)
+    base_branch: str = Field(default="main", max_length=255)
+    
+    # PR metadata
+    title: str = Field(max_length=512)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # Status and lifecycle
+    status: PRStatus = Field(default=PRStatus.CREATED)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    merged_at: Optional[datetime] = Field(default=None)
+    closed_at: Optional[datetime] = Field(default=None)
+    
+    # Files and changes
+    files_changed: Optional[int] = Field(default=None)
+    additions: Optional[int] = Field(default=None)
+    deletions: Optional[int] = Field(default=None)
+    commits_count: Optional[int] = Field(default=None)
+    
+    # Review status
+    approved_by: Optional[str] = Field(default=None, max_length=255)  # GitHub username(s)
+    review_comments_count: int = Field(default=0)
+    has_conflicts: bool = Field(default=False)
+    
+    # Failure analysis
+    failure_type: str = Field(max_length=100)
+    root_cause: Optional[str] = Field(default=None, max_length=512)
+    confidence_score: Optional[float] = Field(default=None)
+    
+    # Additional metadata
+    extra_metadata: Optional[dict] = Field(default=None, sa_column=Column(Text))  # Extra data as JSON
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))  # If PR creation failed
+    
+    def __repr__(self):
+        return (
+            f"<PullRequest("
+            f"id={self.id}, "
+            f"incident={self.incident_id}, "
+            f"pr=#{self.pr_number}, "
+            f"repo={self.repository_full}, "
+            f"status={self.status.value}, "
+            f"branch={self.branch_name}"
+            f")>"
+        )
+
+
+class GitHubTokenTable(SQLModel, table=True):
+    """
+    Stores GitHub access tokens for external repositories.
+    
+    Allows DevFlowFix to create PRs in different repos using their own tokens.
+    Supports both:
+    - Repository-specific tokens (more secure)
+    - Organization-level tokens (simpler but broader)
+    """
+    __tablename__ = "github_tokens"
+
+    id: str = Field(primary_key=True, max_length=36)
+    
+    # Repository identification
+    repository_owner: str = Field(index=True, max_length=255)
+    repository_name: Optional[str] = Field(default=None, index=True, max_length=255)  # NULL = org-level token
+    repository_full: str = Field(unique=True, index=True, max_length=512)  # "owner/repo" or "owner/*"
+    
+    # Token details
+    token: str = Field(max_length=1024)  # Encrypted token value
+    is_encrypted: bool = Field(default=True)
+    
+    # Token metadata
+    token_type: str = Field(default="pat", max_length=50)  # "pat" = Personal Access Token, "app" = GitHub App
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_used_at: Optional[datetime] = Field(default=None)
+    
+    # Permissions
+    scopes: Optional[str] = Field(default=None, max_length=512)  # Comma-separated: repo,workflow,contents
+    permissions_json: Optional[dict] = Field(default=None, sa_column=Column(Text))
+    
+    # Status
+    is_active: bool = Field(default=True)
+    is_valid: bool = Field(default=True)
+    
+    # Metadata
+    description: Optional[str] = Field(default=None, max_length=512)
+    created_by: Optional[str] = Field(default=None, max_length=255)  # User who added this token
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    def __repr__(self):
+        masked_token = self.token[:10] + "..." if self.token else "***"
+        return (
+            f"<GitHubToken("
+            f"id={self.id}, "
+            f"repo={self.repository_full}, "
+            f"token={masked_token}, "
+            f"active={self.is_active}, "
+            f"valid={self.is_valid}"
+            f")>"
+        )
+
+
+class PRCreationLogTable(SQLModel, table=True):
+    """
+    Detailed logs of PR creation attempts.
+    
+    Useful for debugging and auditing PR creation workflows.
+    """
+    __tablename__ = "pr_creation_logs"
+
+    id: str = Field(primary_key=True, max_length=36)
+    
+    # Association
+    incident_id: str = Field(index=True, max_length=36)
+    pr_id: Optional[str] = Field(default=None, max_length=36)  # NULL if creation failed
+    
+    # Request details
+    repository_full: str = Field(max_length=512)
+    branch_name: str = Field(max_length=255)
+    
+    # Solution details
+    failure_type: str = Field(max_length=100)
+    root_cause: Optional[str] = Field(default=None, max_length=512)
+    files_to_change: int = Field(default=0)
+    
+    # Attempt details
+    attempt_number: int = Field(default=1)
+    status: str = Field(max_length=50)  # "success", "failed", "partial"
+    duration_ms: Optional[int] = Field(default=None)
+    
+    # Results
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    pr_url: Optional[str] = Field(default=None, max_length=512)
+    
+    # Error tracking
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    error_type: Optional[str] = Field(default=None, max_length=100)
+    
+    # Additional metadata
+    extra_metadata: Optional[dict] = Field(default=None, sa_column=Column(Text))
+    
+    def __repr__(self):
+        return (
+            f"<PRCreationLog("
+            f"id={self.id}, "
+            f"incident={self.incident_id}, "
+            f"pr={self.pr_id}, "
+            f"status={self.status}, "
+            f"repo={self.repository_full}"
+            f")>"
+        )

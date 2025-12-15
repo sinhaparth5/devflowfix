@@ -318,6 +318,7 @@ from app.api.v1.webhook import router as webhook_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.incidents import router as incidents_router
+from app.api.v1.pr_management import router as pr_management_router
 
 app.include_router(
     auth_router,
@@ -343,6 +344,11 @@ app.include_router(
     tags=["Analytics"],
 )
 
+app.include_router(
+    pr_management_router,
+    tags=["PR Management"],
+)
+
 logger.info(
     "routers_registered",
     routers=[
@@ -350,11 +356,18 @@ logger.info(
         "/api/v1/incidents",
         "/api/v1/webhook",
         "/api/v1/analytics",
+        "/api/v1/pr-management",
     ],
     webhook_endpoints=[
         "/api/v1/webhook/github/{user_id}",
         "/api/v1/webhook/argocd/{user_id}",
         "/api/v1/webhook/kubernetes/{user_id}",
         "/api/v1/webhook/generic/{user_id}",
+    ],
+    pr_management_endpoints=[
+        "/api/v1/pr-management/tokens/register",
+        "/api/v1/pr-management/tokens",
+        "/api/v1/pr-management/pulls",
+        "/api/v1/pr-management/stats",
     ]
 )
