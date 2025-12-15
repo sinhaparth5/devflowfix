@@ -4,14 +4,18 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
+import asyncio
+import brotli
+import gzip as gzip_lib
 from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import ORJSONResponse, JSONResponse
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import ORJSONResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
 import structlog
 
 from app.core.config import settings
@@ -47,6 +51,98 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Security headers for defense in depth
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Cache control for API responses
+        if request.url.path not in ["/health", "/ready"]:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
+class BrotliOrGzipMiddleware(BaseHTTPMiddleware):
+    """
+    Smart compression middleware with Brotli (preferred) and Gzip fallback.
+
+    Brotli provides 15-25% better compression than gzip with similar speed.
+    Falls back to gzip for older clients.
+    """
+
+    def __init__(self, app, minimum_size: int = 500, quality: int = 4):
+        super().__init__(app)
+        self.minimum_size = minimum_size
+        self.brotli_quality = quality  # 0-11, 4 is balanced (11=max compression)
+        self.gzip_level = 6  # 1-9, 6 is balanced
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Don't compress if already compressed or too small
+        if (
+            "content-encoding" in response.headers
+            or "content-length" not in response.headers
+            or int(response.headers.get("content-length", 0)) < self.minimum_size
+        ):
+            return response
+
+        # Parse Accept-Encoding header
+        accept_encoding = request.headers.get("accept-encoding", "").lower()
+
+        # Get response body
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+
+        # Skip if body is too small
+        if len(body) < self.minimum_size:
+            return Response(
+                content=body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
+        # Try Brotli first (best compression)
+        if "br" in accept_encoding:
+            compressed_body = brotli.compress(body, quality=self.brotli_quality)
+            encoding = "br"
+        # Fallback to gzip
+        elif "gzip" in accept_encoding:
+            compressed_body = gzip_lib.compress(body, compresslevel=self.gzip_level)
+            encoding = "gzip"
+        else:
+            # No compression supported by client
+            return Response(
+                content=body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
+        # Build new response with compressed body
+        headers = dict(response.headers)
+        headers["content-encoding"] = encoding
+        headers["content-length"] = str(len(compressed_body))
+        headers["vary"] = "Accept-Encoding"
+
+        return Response(
+            content=compressed_body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=response.media_type,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(
@@ -77,7 +173,14 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
     openapi_url="/openapi.json" if not settings.is_production else None,
     lifespan=lifespan,
-    default_response_class=ORJSONResponse,
+    default_response_class=ORJSONResponse,  # ORJSON is 2-3x faster than stdlib json
+    swagger_ui_parameters={
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+        "filter": True,
+        "tryItOutEnabled": True,
+    },
+    generate_unique_id_function=lambda route: f"{route.tags[0]}-{route.name}" if route.tags else route.name,
 )
 
 
@@ -109,27 +212,21 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-app.add_middleware(RequestIDMiddleware)
+# Middleware order matters! Applied in reverse order (last added = first executed)
+# Order: Error Handling -> Rate Limiting -> Logging -> Compression -> CORS -> Security -> Performance -> Request ID
 
-app.add_middleware(
-    PerformanceMonitoringMiddleware,
-    slow_request_threshold_ms=1000,
-)
+# 1. Error handling (catch all errors)
+app.add_middleware(ErrorHandlingMiddleware)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID", "X-Response-Time"],
-)
+# 2. Rate limiting (block bad actors early)
+if settings.is_production:
+    app.add_middleware(
+        RateLimitMiddleware,
+        requests_per_minute=120,  # Increased for better throughput
+        exclude_paths=["/health", "/ready"],
+    )
 
-app.add_middleware(
-    GZipMiddleware,
-    minimum_size=1000,
-)
-
+# 3. Request logging (log after rate limiting)
 app.add_middleware(
     RequestLoggingMiddleware,
     log_request_body=settings.log_level == "DEBUG",
@@ -137,14 +234,43 @@ app.add_middleware(
     exclude_paths=["/health", "/ready"],
 )
 
-if settings.is_production:
+# 4. Brotli/Gzip compression (compress responses with best algorithm)
+# Brotli is 15-25% better than gzip, falls back to gzip for older clients
+app.add_middleware(
+    BrotliOrGzipMiddleware,
+    minimum_size=500,  # Compress responses > 500 bytes
+    quality=4,  # Brotli quality 0-11 (4=balanced, 11=max compression)
+)
+
+# 5. CORS (handle cross-origin requests)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Response-Time"],
+    max_age=3600,  # Cache preflight requests for 1 hour
+)
+
+# 6. Trusted host (prevent host header attacks)
+if settings.is_production and settings.allowed_hosts:
     app.add_middleware(
-        RateLimitMiddleware,
-        requests_per_minute=60,
-        exclude_paths=["/health", "/ready"],
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts.split(",") if isinstance(settings.allowed_hosts, str) else settings.allowed_hosts,
     )
 
-app.add_middleware(ErrorHandlingMiddleware)
+# 7. Security headers (add security headers to responses)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 8. Performance monitoring (track request timing)
+app.add_middleware(
+    PerformanceMonitoringMiddleware,
+    slow_request_threshold_ms=2000,  # Increased threshold for complex operations
+)
+
+# 9. Request ID (first middleware, adds ID to all requests)
+app.add_middleware(RequestIDMiddleware)
 
 
 @app.exception_handler(RequestValidationError)

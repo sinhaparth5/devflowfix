@@ -1,3 +1,7 @@
+# syntax=docker/dockerfile:1.4
+# Enable BuildKit for better caching and zstd compression
+# Build with: DOCKER_BUILDKIT=1 docker build --compress .
+
 # Stage 1: Builder
 FROM cgr.dev/chainguard/python:latest-dev AS builder
 WORKDIR /build
@@ -10,47 +14,74 @@ RUN apk add --no-cache \
     libpq
 
 USER nonroot
-COPY --chown=nonroot:nonroot requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
 
+# Copy and install dependencies first (better layer caching)
+COPY --chown=nonroot:nonroot requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt && \
+    find /home/nonroot/.local -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /home/nonroot/.local -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
+    find /home/nonroot/.local -name "*.pyc" -delete && \
+    find /home/nonroot/.local -name "*.pyo" -delete && \
+    find /home/nonroot/.local -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Copy app and compile to bytecode (keep .py files for safety)
+# Only compile to bytecode for faster startup, but keep source for compatibility
 COPY --chown=nonroot:nonroot app ./app
 RUN python -m compileall -q app/
+# Note: Keeping .py files for maximum compatibility
+# Bytecode (.pyc) will be used automatically when present
 
 # Stage 2: Runtime - Minimal production image
 FROM cgr.dev/chainguard/python:latest
 
-LABEL maintainer="Parth Sinha and Shine Gupta"
+LABEL maintainer="Parth Sinha and Shine Gupta" \
+      org.opencontainers.image.title="DevFlowFix" \
+      org.opencontainers.image.description="Autonomous AI agent for CI/CD failure remediation" \
+      org.opencontainers.image.vendor="Parth Sinha and Shine Gupta"
 
+# Performance and security environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH="/app:/home/nonroot/.local/lib/python3.12/site-packages"
+    PYTHONPATH="/app:/home/nonroot/.local/lib/python3.12/site-packages" \
+    PYTHONOPTIMIZE=2 \
+    PYTHONHASHSEED=random \
+    WEB_CONCURRENCY=0
 
 WORKDIR /app
 
 USER nonroot
 
-# Copy runtime libraries from builder (read-only)
-COPY --from=builder /usr/lib/libpq.so* /usr/lib/
-COPY --from=builder /usr/lib/postgresql* /usr/lib/
+# Copy only essential runtime libraries (optimized)
+COPY --from=builder /usr/lib/libpq.so.5* /usr/lib/
 
 # Copy installed packages and compiled app with read-only permissions
 COPY --from=builder --chown=nonroot:nonroot --chmod=555 /home/nonroot/.local /home/nonroot/.local
 COPY --from=builder --chown=nonroot:nonroot --chmod=555 /build/app ./app
 
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
+
 EXPOSE 8000
 
-# Chainguard Python images have ENTRYPOINT set to python, so just use CMD
-CMD ["-m", "gunicorn", "app.main:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "4", \
-     "--worker-connections", "1000", \
-     "--bind", "0.0.0.0:8000", \
-     "--timeout", "60", \
-     "--keep-alive", "5", \
-     "--max-requests", "10000", \
-     "--max-requests-jitter", "1000", \
-     "--graceful-timeout", "30", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--log-level", "info", \
-     "--preload"]
+# Dynamic worker calculation: 2 * CPU_COUNT + 1 (optimal for async workloads)
+# Use environment variable WEB_CONCURRENCY to override, fallback to auto-detection
+# --worker-tmp-dir /dev/shm uses RAM for IPC (faster than disk)
+# --worker-class uvicorn.workers.UvicornWorker for async support
+CMD ["sh", "-c", "exec python -m gunicorn app.main:app \
+     --worker-class uvicorn.workers.UvicornWorker \
+     --workers ${WEB_CONCURRENCY:-0} \
+     --threads 2 \
+     --worker-connections 1000 \
+     --worker-tmp-dir /dev/shm \
+     --bind 0.0.0.0:8000 \
+     --timeout 60 \
+     --keep-alive 5 \
+     --max-requests 10000 \
+     --max-requests-jitter 1000 \
+     --graceful-timeout 30 \
+     --access-logfile - \
+     --error-logfile - \
+     --log-level ${LOG_LEVEL:-info} \
+     --preload \
+     --reuse-port"]

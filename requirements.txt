@@ -38,6 +38,7 @@ python-json-logger
 python-dateutil
 pydantic[email]
 orjson
+brotli  # High-performance compression (better than gzip)
 
 # External Integrations
 slack-sdk

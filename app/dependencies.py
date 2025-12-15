@@ -29,7 +29,16 @@ def get_engine():
                 pool_size=settings.database_pool_size,
                 max_overflow=settings.database_max_overflow,
                 pool_pre_ping=True,
+                pool_recycle=3600,  # Recycle connections after 1 hour
+                pool_timeout=30,  # Wait max 30s for connection from pool
                 echo=settings.log_level == "DEBUG",
+                connect_args={
+                    "connect_timeout": 10,  # Connection timeout
+                    "options": "-c statement_timeout=30000",  # 30s query timeout
+                },
+                execution_options={
+                    "isolation_level": "READ COMMITTED"  # Optimal for most workloads
+                }
             )
             logger.info("database_engine_created")
         except Exception as e:
