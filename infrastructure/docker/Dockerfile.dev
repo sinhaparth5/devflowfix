@@ -64,24 +64,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8000
 
-# Dynamic worker calculation: 2 * CPU_COUNT + 1 (optimal for async workloads)
-# Use environment variable WEB_CONCURRENCY to override, fallback to auto-detection
-# --worker-tmp-dir /dev/shm uses RAM for IPC (faster than disk)
-# --worker-class uvicorn.workers.UvicornWorker for async support
-CMD ["sh", "-c", "exec python -m gunicorn app.main:app \
-     --worker-class uvicorn.workers.UvicornWorker \
-     --workers ${WEB_CONCURRENCY:-0} \
-     --threads 2 \
-     --worker-connections 1000 \
-     --worker-tmp-dir /dev/shm \
-     --bind 0.0.0.0:8000 \
-     --timeout 60 \
-     --keep-alive 5 \
-     --max-requests 10000 \
-     --max-requests-jitter 1000 \
-     --graceful-timeout 30 \
-     --access-logfile - \
-     --error-logfile - \
-     --log-level ${LOG_LEVEL:-info} \
-     --preload \
-     --reuse-port"]
+# Distroless image - no shell available, use direct Python execution
+# Configuration is loaded from app/gunicorn_conf.py for dynamic worker scaling
+# Set WEB_CONCURRENCY env var to control workers (0 = auto-detect based on CPU)
+# Chainguard images have ENTRYPOINT ["python"], so we use CMD with module args
+CMD ["-m", "gunicorn", "app.main:app", "--config", "app/gunicorn_conf.py"]
