@@ -9,6 +9,7 @@ Supports organization-level and repository-specific tokens.
 """
 
 import os
+import json
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 from cryptography.fernet import Fernet
@@ -162,15 +163,16 @@ class GitHubTokenManager:
                 existing.is_valid = True
                 if scopes:
                     existing.scopes = ",".join(scopes)
-                
+                    existing.permissions_json = json.dumps({"scopes": scopes})
+
                 db.commit()
-                
+
                 logger.info(
                     "token_updated",
                     repository=repository_full,
                     token_id=existing.id,
                 )
-                
+
                 return self._token_to_dict(existing)
             
             # Create new token record
@@ -185,7 +187,7 @@ class GitHubTokenManager:
                 description=description,
                 created_by=created_by,
                 scopes=",".join(scopes) if scopes else None,
-                permissions_json={"scopes": scopes} if scopes else None,
+                permissions_json=json.dumps({"scopes": scopes}) if scopes else None,
             )
             
             db.add(token_record)
