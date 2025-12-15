@@ -168,7 +168,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             # Handle unexpected exceptions
             request_id = getattr(request.state, "request_id", "unknown")
-            
+
             logger.error(
                 "unhandled_exception",
                 request_id=request_id,
@@ -176,15 +176,14 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
                 error=str(exc),
                 exc_info=True,
             )
-            
-            # Don't expose internal errors in production
-            detail = str(exc) if settings.environment != "prod" else "Internal server error"
-            
+
+            # Never expose internal error details to external users
+            # Error details are logged above for debugging purposes
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content={
                     "error": "internal_error",
-                    "message": detail,
+                    "message": "An internal server error occurred. Please contact support with the request ID.",
                     "request_id": request_id,
                 },
             )

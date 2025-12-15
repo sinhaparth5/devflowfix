@@ -210,7 +210,7 @@ async def devflowfix_exception_handler(request: Request, exc: DevFlowFixExceptio
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    
+
     logger.error(
         "unhandled_exception",
         request_id=request_id,
@@ -218,14 +218,14 @@ async def general_exception_handler(request: Request, exc: Exception):
         error=str(exc),
         exc_info=True,
     )
-    
-    detail = str(exc) if not settings.is_production else "Internal server error"
-    
+
+    # Never expose internal error details to external users
+    # Error details are logged above for debugging purposes
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "error": "internal_error",
-            "message": detail,
+            "message": "An internal server error occurred. Please contact support with the request ID.",
             "request_id": request_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
