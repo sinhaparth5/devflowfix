@@ -352,7 +352,7 @@ class PRCreatorService:
                     repo=repo,
                     path=file_path,
                     message=f"fix: {change.get('explanation', 'Auto-fix code issue')}",
-                    context=fixed_code,
+                    content=fixed_code,
                     branch=branch,
                     sha=sha,
                 )
@@ -413,7 +413,7 @@ class PRCreatorService:
                     repo=repo,
                     path=file_path,
                     message=f"config: {change.get('reason', 'Update configuration')}",
-                    context=config_content,
+                    content=config_content,
                     branch=branch,
                     sha=sha,
                 )
