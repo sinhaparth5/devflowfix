@@ -482,7 +482,7 @@ class GitHubTokenTable(SQLModel, table=True):
     """
     __tablename__ = "github_tokens"
 
-    id: str = Field(primary_key=True, max_length=36)
+    id: str = Field(primary_key=True, max_length=255)
 
     # User association - CRITICAL for security
     user_id: str = Field(foreign_key="users.user_id", index=True, max_length=50)

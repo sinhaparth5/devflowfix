@@ -146,7 +146,7 @@ class ServiceContainer:
         )
 
 
-def get_event_processor(session: Session = next(get_db())) -> EventProcessor:
+def get_event_processor(session: Session = Depends(get_db)) -> EventProcessor:
     container = ServiceContainer.get_instance()
     return container.get_event_processor(session)
 
@@ -171,9 +171,9 @@ def get_retriever_service() -> RetrieverService:
     return container.get_retriever_service()
 
 
-def get_incident_repository(session: Session = next(get_db())) -> IncidentRepository:
+def get_incident_repository(session: Session = Depends(get_db)) -> IncidentRepository:
     return IncidentRepository(session)
 
 
-def get_vector_repository(session: Session = next(get_db())) -> VectorRepository:
+def get_vector_repository(session: Session = Depends(get_db)) -> VectorRepository:
     return VectorRepository(session)

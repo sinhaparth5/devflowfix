@@ -173,55 +173,64 @@ class PRCreatorService:
             )
 
             # Store PR metadata in database
-            db = db_session or next(get_db())
-            
-            pr_id = f"pr_{uuid4()}"
-            
-            pr_record = PullRequestTable(
-                id=pr_id,
-                incident_id=incident.incident_id,
-                repository_owner=owner,
-                repository_name=repo,
-                repository_full=f"{owner}/{repo}",
-                pr_number=pr_result["number"],
-                pr_url=pr_result["html_url"],
-                branch_name=branch_name,
-                base_branch=base_branch,
-                title=pr_title,
-                description=pr_body,
-                status=PRStatus.CREATED,
-                files_changed=len(changed_files + config_files),
-                failure_type=analysis.category.value if analysis.category else "unknown",
-                root_cause=analysis.root_cause,
-                confidence_score=analysis.confidence,
-                metadata={
-                    "incident_id": incident.incident_id,
-                    "created_by": "devflowfix",
-                    "version": "1.0",
-                },
-            )
-            
-            db.add(pr_record)
-            
-            # Log creation attempt
-            creation_log = PRCreationLogTable(
-                id=creation_log_id,
-                incident_id=incident.incident_id,
-                pr_id=pr_id,
-                repository_full=f"{owner}/{repo}",
-                branch_name=branch_name,
-                failure_type=analysis.category.value if analysis.category else "unknown",
-                root_cause=analysis.root_cause,
-                files_to_change=len(changed_files + config_files),
-                status="success",
-                duration_ms=int(
-                    (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-                ),
-                pr_url=pr_result["html_url"],
-            )
-            
-            db.add(creation_log)
-            db.commit()
+            db_gen = None
+            if db_session:
+                db = db_session
+            else:
+                db_gen = get_db()
+                db = next(db_gen)
+
+            try:
+                pr_id = f"pr_{uuid4()}"
+
+                pr_record = PullRequestTable(
+                    id=pr_id,
+                    incident_id=incident.incident_id,
+                    repository_owner=owner,
+                    repository_name=repo,
+                    repository_full=f"{owner}/{repo}",
+                    pr_number=pr_result["number"],
+                    pr_url=pr_result["html_url"],
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                    title=pr_title,
+                    description=pr_body,
+                    status=PRStatus.CREATED,
+                    files_changed=len(changed_files + config_files),
+                    failure_type=analysis.category.value if analysis.category else "unknown",
+                    root_cause=analysis.root_cause,
+                    confidence_score=analysis.confidence,
+                    metadata={
+                        "incident_id": incident.incident_id,
+                        "created_by": "devflowfix",
+                        "version": "1.0",
+                    },
+                )
+
+                db.add(pr_record)
+
+                # Log creation attempt
+                creation_log = PRCreationLogTable(
+                    id=creation_log_id,
+                    incident_id=incident.incident_id,
+                    pr_id=pr_id,
+                    repository_full=f"{owner}/{repo}",
+                    branch_name=branch_name,
+                    failure_type=analysis.category.value if analysis.category else "unknown",
+                    root_cause=analysis.root_cause,
+                    files_to_change=len(changed_files + config_files),
+                    status="success",
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                    ),
+                    pr_url=pr_result["html_url"],
+                )
+
+                db.add(creation_log)
+                db.commit()
+            finally:
+                if db_gen:
+                    db.close()
 
             logger.info(
                 "pr_created_success",
@@ -248,10 +257,15 @@ class PRCreatorService:
                 error=str(e),
                 exc_info=True,
             )
-            
+
             # Log failed attempt
+            db_gen_err = None
             try:
-                db = db_session or next(get_db())
+                if db_session:
+                    db = db_session
+                else:
+                    db_gen_err = get_db()
+                    db = next(db_gen_err)
                 
                 creation_log = PRCreationLogTable(
                     id=creation_log_id,
@@ -269,12 +283,15 @@ class PRCreatorService:
                     error_message=str(e),
                     error_type=type(e).__name__,
                 )
-                
+
                 db.add(creation_log)
                 db.commit()
             except Exception as log_error:
                 logger.error("failed_to_log_pr_creation_error", error=str(log_error))
-            
+            finally:
+                if db_gen_err:
+                    db.close()
+
             raise
     
     def _extract_repo_info(self, incident: Incident) -> Optional[Dict[str, str]]:

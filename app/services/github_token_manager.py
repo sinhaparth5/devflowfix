@@ -143,17 +143,17 @@ class GitHubTokenManager:
             created_by=created_by,
         )
 
+        db_gen = get_db()
+        db = next(db_gen)
         try:
-            db = next(get_db())
-
             # Check if token already exists for THIS USER
             existing = db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.user_id == user_id,
                 GitHubTokenTable.repository_full == repository_full
             ).first()
-            
+
             encrypted_token = self._encrypt_token(token)
-            
+
             if existing:
                 # Update existing token
                 existing.token = encrypted_token
@@ -174,7 +174,7 @@ class GitHubTokenManager:
                 )
 
                 return self._token_to_dict(existing)
-            
+
             # Create new token record
             token_record = GitHubTokenTable(
                 id=f"token_{user_id}_{owner}_{repo or 'org'}_{datetime.now(timezone.utc).timestamp()}",
@@ -189,19 +189,18 @@ class GitHubTokenManager:
                 scopes=",".join(scopes) if scopes else None,
                 permissions_json=json.dumps({"scopes": scopes}) if scopes else None,
             )
-            
+
             db.add(token_record)
             db.commit()
             db.refresh(token_record)
-            
+
             logger.info(
                 "token_registered",
                 repository=repository_full,
                 token_id=token_record.id,
             )
-            
+
             return self._token_to_dict(token_record)
-            
         except Exception as e:
             logger.error(
                 "token_registration_failed",
@@ -209,6 +208,8 @@ class GitHubTokenManager:
                 error=str(e),
             )
             raise
+        finally:
+            db.close()
     
     def get_token(self, user_id: str, owner: str, repo: Optional[str] = None) -> Optional[str]:
         """
@@ -228,9 +229,9 @@ class GitHubTokenManager:
         """
         from app.dependencies import get_db
 
+        db_gen = get_db()
+        db = next(db_gen)
         try:
-            db = next(get_db())
-
             # Try repo-specific token first
             if repo:
                 repo_specific = f"{owner}/{repo}"
@@ -295,6 +296,8 @@ class GitHubTokenManager:
                 error=str(e),
             )
             return None
+        finally:
+            db.close()
     
     def list_tokens(
         self,
@@ -315,9 +318,9 @@ class GitHubTokenManager:
         """
         from app.dependencies import get_db
 
+        db_gen = get_db()
+        db = next(db_gen)
         try:
-            db = next(get_db())
-
             query = db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.user_id == user_id
             )
@@ -329,7 +332,7 @@ class GitHubTokenManager:
                 query = query.filter(GitHubTokenTable.is_active == True)
 
             records = query.all()
-            
+
             return [
                 {
                     "id": record.id,
@@ -346,10 +349,12 @@ class GitHubTokenManager:
                 }
                 for record in records
             ]
-            
+
         except Exception as e:
             logger.error("token_list_failed", error=str(e))
             return []
+        finally:
+            db.close()
     
     def deactivate_token(self, token_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -364,9 +369,9 @@ class GitHubTokenManager:
         """
         from app.dependencies import get_db
 
+        db_gen = get_db()
+        db = next(db_gen)
         try:
-            db = next(get_db())
-
             query = db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.id == token_id
             )
@@ -398,6 +403,8 @@ class GitHubTokenManager:
         except Exception as e:
             logger.error("token_deactivation_failed", token_id=token_id, error=str(e))
             return False
+        finally:
+            db.close()
     
     def validate_token(self, user_id: str, owner: str, repo: Optional[str] = None) -> bool:
         """
