@@ -34,9 +34,9 @@ keepalive = 5
 timeout = 60
 graceful_timeout = 30
 
-# Worker lifecycle management
-max_requests = 10000
-max_requests_jitter = 1000
+# Worker lifecycle management - reduced to prevent memory leaks
+max_requests = 1000
+max_requests_jitter = 100
 
 # Binding
 bind = "0.0.0.0:8000"
@@ -47,7 +47,9 @@ errorlog = "-"
 loglevel = os.getenv("LOG_LEVEL", "info").lower()
 
 # Performance optimizations
-preload_app = True
+# NOTE: preload_app disabled to prevent database connection pool leaks
+# Each worker loads the app independently with its own resources
+preload_app = False
 reuse_port = True
 
 # Use shared memory for IPC (faster than disk)

@@ -3,36 +3,37 @@
 # Build with: DOCKER_BUILDKIT=1 docker build --compress .
 
 # Stage 1: Builder
-FROM cgr.dev/chainguard/python:latest-dev AS builder
+FROM python:3.13-slim-bookworm AS builder
+
 WORKDIR /build
 
-# Install build AND runtime dependencies
-USER root
-RUN apk add --no-cache \
-    build-base \
-    postgresql-dev \
-    libpq
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-USER nonroot
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Copy and install dependencies first (better layer caching)
-COPY --chown=nonroot:nonroot requirements.txt .
+COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt && \
-    find /home/nonroot/.local -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /home/nonroot/.local -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
-    find /home/nonroot/.local -name "*.pyc" -delete && \
-    find /home/nonroot/.local -name "*.pyo" -delete && \
-    find /home/nonroot/.local -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+    find /root/.local -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
+    find /root/.local -name "*.pyc" -delete && \
+    find /root/.local -name "*.pyo" -delete && \
+    find /root/.local -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Copy app and compile to bytecode (keep .py files for safety)
 # Only compile to bytecode for faster startup, but keep source for compatibility
-COPY --chown=nonroot:nonroot app ./app
+COPY app ./app
 RUN python -m compileall -q app/
 # Note: Keeping .py files for maximum compatibility
 # Bytecode (.pyc) will be used automatically when present
 
 # Stage 2: Runtime - Minimal production image
-FROM cgr.dev/chainguard/python:latest
+FROM python:3.13-slim-bookworm
 
 LABEL maintainer="Parth Sinha and Shine Gupta" \
       org.opencontainers.image.title="DevFlowFix" \
@@ -42,21 +43,31 @@ LABEL maintainer="Parth Sinha and Shine Gupta" \
 # Performance and security environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH="/app:/home/nonroot/.local/lib/python3.12/site-packages" \
+    PYTHONPATH="/app" \
     PYTHONOPTIMIZE=2 \
     PYTHONHASHSEED=random \
-    WEB_CONCURRENCY=0
+    WEB_CONCURRENCY=4
 
 WORKDIR /app
 
-USER nonroot
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy only essential runtime libraries (optimized)
-COPY --from=builder /usr/lib/libpq.so.5* /usr/lib/
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser appuser \
+    && mkdir -p /home/appuser/.local \
+    && chown -R appuser:appuser /home/appuser
 
-# Copy installed packages and compiled app with read-only permissions
-COPY --from=builder --chown=nonroot:nonroot --chmod=555 /home/nonroot/.local /home/nonroot/.local
-COPY --from=builder --chown=nonroot:nonroot --chmod=555 /build/app ./app
+# Copy installed packages and compiled app from builder
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+COPY --from=builder --chown=appuser:appuser /build/app ./app
+
+# Set permissions
+RUN chmod -R 555 /home/appuser/.local && chmod -R 555 /app
+
+USER appuser
 
 # Health check for container orchestration
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
@@ -64,8 +75,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8000
 
-# Distroless image - no shell available, use direct Python execution
-# Configuration is loaded from app/gunicorn_conf.py for dynamic worker scaling
-# Set WEB_CONCURRENCY env var to control workers (0 = auto-detect based on CPU)
-# Chainguard images have ENTRYPOINT ["python"], so we use CMD with module args
-CMD ["-m", "gunicorn", "app.main:app", "--config", "app/gunicorn_conf.py"]
+# Add .local/bin to PATH for gunicorn
+ENV PATH="/home/appuser/.local/bin:$PATH"
+
+# Use gunicorn config file for dynamic worker scaling
+# Set WEB_CONCURRENCY env var to control workers (default: 4)
+CMD ["gunicorn", "app.main:app", "--config", "app/gunicorn_conf.py"]
