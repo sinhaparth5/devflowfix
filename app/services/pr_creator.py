@@ -163,6 +163,14 @@ class PRCreatorService:
                 changed_files=changed_files + config_files,
             )
 
+            logger.info(
+                "pr_creation_payload",
+                title_length=len(pr_title),
+                body_length=len(pr_body),
+                head=branch_name,
+                base=base_branch,
+            )
+
             pr_result = await github_client.create_pull_request(
                 owner=owner,
                 repo=repo,

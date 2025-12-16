@@ -182,6 +182,12 @@ class GitHubClient:
                     pass
                 
                 error_message = error_data.get("message", response.text)
+                errors = error_data.get("errors", [])
+                
+                # Include validation errors in message
+                if errors:
+                    error_details = "; ".join([str(e) for e in errors])
+                    error_message = f"{error_message} ({error_details})"
                 
                 logger.error(
                     "github_api_error",
@@ -189,12 +195,12 @@ class GitHubClient:
                     endpoint=endpoint,
                     status_code=response.status_code,
                     message=error_message,
+                    full_response=error_data,
                 )
                 
                 raise GitHubAPIError(
                     f"GitHub API error: {error_message}",
                     status_code=response.status_code,
-                    response=error_data,
                 )
             
             if response.status_code == 204: 
