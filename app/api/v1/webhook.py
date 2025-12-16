@@ -88,7 +88,15 @@ async def verify_github_webhook_signature(
     Path-based webhook authentication with user lookup.
     """
     body = await request.body()
-    
+
+    logger.debug(
+        "github_webhook_signature_verification_start",
+        user_id=user_id,
+        body_length=len(body),
+        has_signature=bool(x_hub_signature_256),
+        content_type=request.headers.get("content-type"),
+    )
+
     if not x_hub_signature_256:
         logger.error(
             "github_webhook_no_signature",
@@ -368,7 +376,22 @@ async def receive_github_webhook(
             queued=False,
             message="GitHub webhook ping received",
         )
-    
+
+    # Check if body is empty
+    if not body or len(body) == 0:
+        logger.warning(
+            "github_webhook_empty_body",
+            user_id=user_id,
+            event_type=x_github_event,
+            delivery_id=x_github_delivery,
+        )
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"Empty body received for event {x_github_event}",
+        )
+
     try:
         import json
         payload = json.loads(body.decode('utf-8'))
@@ -376,6 +399,9 @@ async def receive_github_webhook(
         logger.error(
             "github_webhook_invalid_json",
             user_id=user_id,
+            event_type=x_github_event,
+            body_length=len(body),
+            body_preview=body[:200].decode('utf-8', errors='replace') if body else None,
             error=str(e),
         )
         raise HTTPException(
@@ -448,11 +474,34 @@ async def receive_github_webhook_sync(
             queued=False,
             message="GitHub webhook ping received",
         )
-    
+
+    # Check if body is empty
+    if not body or len(body) == 0:
+        logger.warning(
+            "github_webhook_empty_body_sync",
+            user_id=user_id,
+            event_type=x_github_event,
+            delivery_id=x_github_delivery,
+        )
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            message=f"Empty body received for event {x_github_event}",
+        )
+
     try:
         import json
         payload = json.loads(body.decode('utf-8'))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(
+            "github_webhook_invalid_json_sync",
+            user_id=user_id,
+            event_type=x_github_event,
+            body_length=len(body),
+            body_preview=body[:200].decode('utf-8', errors='replace') if body else None,
+            error=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON payload: {e}",
