@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import ORJSONResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
@@ -79,7 +79,6 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
     openapi_url="/openapi.json" if not settings.is_production else None,
     lifespan=lifespan,
-    default_response_class=ORJSONResponse,  # ORJSON is 2-3x faster than stdlib json
     swagger_ui_parameters={
         "persistAuthorization": True,
         "displayRequestDuration": True,
@@ -87,6 +86,7 @@ app = FastAPI(
         "tryItOutEnabled": True,
     },
     generate_unique_id_function=lambda route: f"{route.tags[0]}-{route.name}" if route.tags else route.name,
+    default_response_class=JSONResponse,
 )
 
 

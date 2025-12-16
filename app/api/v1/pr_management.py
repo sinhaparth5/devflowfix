@@ -21,7 +21,7 @@ from app.api.v1.auth import get_current_active_user
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1/pr-management", tags=["PR Management"])
+router = APIRouter(prefix="/pr-management", tags=["PR Management"])
 
 
 # ============================================================================

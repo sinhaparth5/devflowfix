@@ -522,12 +522,27 @@ class EventProcessor:
                 "solution_generation_complete",
                 incident_id=incident.incident_id,
                 failure_type=analysis.category.value,
+                has_code_changes=bool(solution.get("code_changes")),
+                has_config_changes=bool(solution.get("configuration_changes")),
+            )
+
+            # Debug PR creation decision
+            should_create = self._should_create_pr(analysis, incident)
+            logger.info(
+                "pr_creation_decision",
+                incident_id=incident.incident_id,
+                enable_auto_pr=self.enable_auto_pr,
+                has_code_changes=bool(solution.get("code_changes")),
+                should_create_pr=should_create,
+                confidence=analysis.confidence,
+                fixability=str(analysis.fixability),
+                has_repository=bool(incident.context.get("repository")),
             )
 
             if (
                 self.enable_auto_pr
                 and solution.get("code_changes")
-                and self._should_create_pr(analysis, incident)
+                and should_create
             ):
                 try:
                     logger.info(
@@ -674,11 +689,13 @@ class EventProcessor:
         
         from app.core.enums import Fixability
 
-        if analysis.fixability != Fixability.AUTO:
+        # Allow both AUTO and MANUAL fixability to create PRs
+        # AUTO = automatic fixes, MANUAL = suggestions/comments
+        if analysis.fixability not in [Fixability.AUTO, Fixability.MANUAL]:
             logger.info(
-                "pr_creation_skipped_not_auto_fixable",
+                "pr_creation_skipped_not_fixable",
                 incident_id=incident.incident_id,
-                fixability=analysis
+                fixability=analysis.fixability.value if hasattr(analysis.fixability, 'value') else str(analysis.fixability)
             )
             return False
         
@@ -687,6 +704,7 @@ class EventProcessor:
             incident_id=incident.incident_id,
             confidence=analysis.confidence,
             failure_type=analysis.category.value,
+            fixability=analysis.fixability.value if hasattr(analysis.fixability, 'value') else str(analysis.fixability),
         )
 
         return True

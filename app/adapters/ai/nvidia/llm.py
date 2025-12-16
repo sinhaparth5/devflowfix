@@ -444,7 +444,7 @@ class LLMAdapter:
                 failure_type=failure_type,
                 has_immediate_fix=bool(solution.get("immediate_fix")),
                 has_code_changes=bool(solution.get("code_changes")),
-                num_config_changes=len(solution.get("configuration_changes", [])),
+                num_config_changes=len(solution.get("configuration_changes") or []),
             )
             return solution
             
