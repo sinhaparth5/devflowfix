@@ -130,7 +130,7 @@ class PRCreatorService:
             confidence=analysis.confidence,
         )
 
-        creation_log_id = f"log_{uuid4()}"
+        creation_log_id = f"log_{uuid4().hex[:32]}"  # log_ (4) + 32 hex chars = 36 total
         start_time = datetime.now(timezone.utc)
         
         try:
@@ -155,12 +155,25 @@ class PRCreatorService:
                 config_changes=solution.get("configuration_changes", []),
             )
 
+            # If no file changes but we have a solution, create a SOLUTION.md file
+            solution_file = []
+            if not changed_files and not config_files and solution.get("immediate_fix"):
+                solution_file = await self._create_solution_file(
+                    github_client=github_client,
+                    owner=owner,
+                    repo=repo,
+                    branch=branch_name,
+                    incident=incident,
+                    analysis=analysis,
+                    solution=solution,
+                )
+
             pr_title = self._generate_pr_title(analysis)
             pr_body = self._generate_pr_body(
                 incident=incident,
                 analysis=analysis,
                 solution=solution,
-                changed_files=changed_files + config_files,
+                changed_files=changed_files + config_files + solution_file,
             )
 
             logger.info(
@@ -189,7 +202,7 @@ class PRCreatorService:
                 db = next(db_gen)
 
             try:
-                pr_id = f"pr_{uuid4()}"
+                pr_id = f"pr_{uuid4().hex[:33]}"  # pr_ (3) + 33 hex chars = 36 total
 
                 pr_record = PullRequestTable(
                     id=pr_id,
@@ -204,7 +217,7 @@ class PRCreatorService:
                     title=pr_title,
                     description=pr_body,
                     status=PRStatus.CREATED,
-                    files_changed=len(changed_files + config_files),
+                    files_changed=len(changed_files + config_files + solution_file),
                     failure_type=analysis.category.value if analysis.category else "unknown",
                     root_cause=analysis.root_cause,
                     confidence_score=analysis.confidence,
@@ -217,21 +230,21 @@ class PRCreatorService:
 
                 db.add(pr_record)
 
-                # Log creation attempt
+                # Log creation attempt (truncate fields to fit DB constraints)
                 creation_log = PRCreationLogTable(
                     id=creation_log_id,
                     incident_id=incident.incident_id,
                     pr_id=pr_id,
-                    repository_full=f"{owner}/{repo}",
-                    branch_name=branch_name,
-                    failure_type=analysis.category.value if analysis.category else "unknown",
-                    root_cause=analysis.root_cause,
-                    files_to_change=len(changed_files + config_files),
+                    repository_full=f"{owner}/{repo}"[:512],
+                    branch_name=branch_name[:255],
+                    failure_type=(analysis.category.value if analysis.category else "unknown")[:100],
+                    root_cause=analysis.root_cause[:512] if analysis.root_cause else None,
+                    files_to_change=len(changed_files + config_files + solution_file),
                     status="success",
                     duration_ms=int(
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                     ),
-                    pr_url=pr_result["html_url"],
+                    pr_url=pr_result["html_url"][:512] if pr_result.get("html_url") else None,
                 )
 
                 db.add(creation_log)
@@ -246,13 +259,13 @@ class PRCreatorService:
                 pr_id=pr_id,
                 pr_number=pr_result["number"],
                 pr_url=pr_result["html_url"],
-                files_changed=len(changed_files + config_files),
+                files_changed=len(changed_files + config_files + solution_file),
             )
 
             return {
                 **pr_result,
                 "pr_id": pr_id,
-                "files_changed": changed_files + config_files,
+                "files_changed": changed_files + config_files + solution_file,
                 "timestamp": start_time.isoformat(),
             }
             
@@ -275,21 +288,22 @@ class PRCreatorService:
                     db_gen_err = get_db()
                     db = next(db_gen_err)
                 
+                # Truncate all fields to fit DB constraints
                 creation_log = PRCreationLogTable(
                     id=creation_log_id,
                     incident_id=incident.incident_id,
                     pr_id=None,
-                    repository_full=f"{owner}/{repo}",
-                    branch_name=self._generate_branch_name(incident, analysis),
-                    failure_type=analysis.category.value if analysis.category else "unknown",
-                    root_cause=analysis.root_cause,
+                    repository_full=f"{owner}/{repo}"[:512],
+                    branch_name=self._generate_branch_name(incident, analysis)[:255],
+                    failure_type=(analysis.category.value if analysis.category else "unknown")[:100],
+                    root_cause=analysis.root_cause[:512] if analysis.root_cause else None,
                     files_to_change=len(solution.get("code_changes", [])),
                     status="failed",
                     duration_ms=int(
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                     ),
-                    error_message=str(e),
-                    error_type=type(e).__name__[:36],  # Truncate to fit DB constraint
+                    error_message=str(e)[:5000] if e else None,  # Text field, be generous
+                    error_type=type(e).__name__[:100],  # Increased from 36 to 100
                 )
 
                 db.add(creation_log)
@@ -584,6 +598,113 @@ class PRCreatorService:
         
         return changed_files
 
+    async def _create_solution_file(
+            self,
+            github_client: GitHubClient,
+            owner: str,
+            repo: str,
+            branch: str,
+            incident: Incident,
+            analysis: AnalysisResult,
+            solution: Dict[str, Any],
+    ) -> List[str]:
+        """Create a SOLUTION.md file when there are no code changes but we have a solution."""
+        try:
+            immediate_fix = solution.get("immediate_fix", {})
+
+            # Generate solution markdown content
+            content = f"""# DevFlowFix Automated Solution
+
+## Incident Details
+- **Incident ID**: {incident.incident_id}
+- **Failure Type**: {analysis.category.value.replace("_", " ").title()}
+- **Root Cause**: {analysis.root_cause}
+- **Confidence**: {analysis.confidence:.0%}
+- **Timestamp**: {incident.timestamp.isoformat()}
+
+## Recommended Fix
+
+### Description
+{immediate_fix.get('description', 'No description available')}
+
+### Steps to Apply
+"""
+
+            for i, step in enumerate(immediate_fix.get('steps', []), 1):
+                content += f"{i}. {step}\n"
+
+            content += f"""
+### Additional Information
+- **Estimated Time**: {immediate_fix.get('estimated_time_minutes', 'N/A')} minutes
+- **Risk Level**: {immediate_fix.get('risk_level', 'Unknown').upper()}
+
+"""
+
+            # Add prevention measures if available
+            prevention = solution.get("prevention_measures", [])
+            if prevention:
+                content += "## Prevention Measures\n\n"
+                for measure in prevention:
+                    content += f"### {measure.get('measure', 'N/A')}\n"
+                    content += f"{measure.get('description', 'N/A')}\n\n"
+
+            # Add resources if available
+            resources = solution.get("resources", [])
+            if resources:
+                content += "## Helpful Resources\n\n"
+                for resource in resources:
+                    content += f"- [{resource.get('title', 'Resource')}]({resource.get('url', '#')})\n"
+                content += "\n"
+
+            content += """---
+*This solution was automatically generated by DevFlowFix AI.*
+*Please review carefully before applying the changes.*
+"""
+
+            # Create the file in the repository (check if exists first)
+            sha = None
+            try:
+                # Try to get existing file to update it
+                existing_file = await github_client.get_file_contents(
+                    owner=owner,
+                    repo=repo,
+                    path="DEVFLOWFIX_SOLUTION.md",
+                    ref=branch,
+                )
+                sha = existing_file.get("sha")
+                logger.info("solution_file_exists_updating", sha=sha)
+            except Exception:
+                # File doesn't exist, will create new
+                logger.info("solution_file_not_found_creating_new")
+                pass
+
+            await github_client.create_or_update_file(
+                owner=owner,
+                repo=repo,
+                path="DEVFLOWFIX_SOLUTION.md",
+                message=f"docs: Add automated solution for {analysis.category.value}",
+                content=content,
+                branch=branch,
+                sha=sha,  # Will be None for new files, or existing SHA for updates
+            )
+
+            logger.info(
+                "solution_file_created",
+                owner=owner,
+                repo=repo,
+                branch=branch,
+            )
+
+            return ["DEVFLOWFIX_SOLUTION.md"]
+
+        except Exception as e:
+            logger.error(
+                "solution_file_creation_failed",
+                owner=owner,
+                repo=repo,
+                error=str(e),
+            )
+            return []
 
     def _generate_pr_title(self, analysis: AnalysisResult) -> str:
         """Generate PR title."""

@@ -606,9 +606,14 @@ class EventProcessor:
                 has_repository=bool(incident.context.get("repository")),
             )
 
+            # Create PR if we have any actionable changes (code, config, or detailed solution)
+            has_code_changes = solution.get("code_changes") and len(solution.get("code_changes", [])) > 0
+            has_config_changes = solution.get("configuration_changes") and len(solution.get("configuration_changes", [])) > 0
+            has_solution = solution.get("immediate_fix") and solution.get("immediate_fix", {}).get("description")
+
             if (
                 self.enable_auto_pr
-                and solution.get("code_changes")
+                and (has_code_changes or has_config_changes or has_solution)
                 and should_create
             ):
                 try:
@@ -616,6 +621,9 @@ class EventProcessor:
                         "auto_pr_creation_start",
                         incident_id=incident.incident_id,
                         failure_type=analysis.category.value,
+                        has_code_changes=has_code_changes,
+                        has_config_changes=has_config_changes,
+                        has_solution_description=has_solution,
                     )
 
                     # Extract user_id from incident context
@@ -672,11 +680,20 @@ class EventProcessor:
                     print(f"\n⚠️  WARNING: Failed to create automated PR")
                     print(f"   Reason: {str(pr_error)}")
                     print(f"   You can still use the solution details above to fix manually.\n")
-            elif solution.get("code_changes"):
+            else:
+                # Log why PR wasn't created
                 if not self.enable_auto_pr:
                     logger.info(
                         "auto_pr_skipped_disabled",
                         incident_id=incident.incident_id,
+                    )
+                elif not (has_code_changes or has_config_changes or has_solution):
+                    logger.info(
+                        "auto_pr_skipped_no_changes",
+                        incident_id=incident.incident_id,
+                        has_code_changes=has_code_changes,
+                        has_config_changes=has_config_changes,
+                        has_solution=has_solution,
                     )
                 elif not self._should_create_pr(analysis, incident):
                     logger.info(

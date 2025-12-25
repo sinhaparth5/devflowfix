@@ -30,7 +30,7 @@ class LLMAdapter:
         self,
         model: Optional[str] = None,
         temperature: float = 0.1,
-        max_tokens: int = 2000,
+        max_tokens: int = 4000,  # Increased from 2000 to prevent truncation
     ):
         """
         Initialize LLM adapter.
@@ -188,16 +188,23 @@ class LLMAdapter:
     def _parse_solution_response(self, text: str) -> Dict[str, Any]:
         """
         Parse LLM solution response into solution dictionary.
-        
+
         Args:
             text: LLM response text containing solution JSON
-            
+
         Returns:
             Parsed solution dictionary
-            
+
         Raises:
             ValueError: If JSON cannot be extracted or parsed
         """
+        # Log the raw response for debugging
+        logger.debug(
+            "parsing_solution_response",
+            response_length=len(text),
+            response_preview=text[:500],
+        )
+
         json_text = text.strip()
         
         # Remove markdown code blocks if present
@@ -231,6 +238,8 @@ class LLMAdapter:
                 "solution_response_parse_failed",
                 error=str(e),
                 response_length=len(json_text),
+                full_response=text,  # Log full response for debugging
+                json_text_preview=json_text[:1000],  # Log what we tried to parse
             )
             # Return a minimal solution structure instead of failing
             return {
@@ -430,13 +439,19 @@ class LLMAdapter:
         )
         
         try:
+            # Use higher token limit for solution generation (needs more space for code)
             response = await self.client.complete(
                 prompt=prompt,
-                max_tokens=self.max_tokens,
+                max_tokens=6000,  # Higher limit to avoid truncation of code changes
                 temperature=self.temperature,
             )
-            
+
             text = self.client.extract_text(response)
+            logger.debug(
+                "llm_solution_raw_response",
+                response_length=len(text),
+                response_starts_with=text[:200],
+            )
             solution = self._parse_solution_response(text)
             
             logger.info(
