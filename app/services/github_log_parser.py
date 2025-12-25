@@ -306,3 +306,99 @@ class GitHubLogParser:
 
         groups = self.group_errors(errors)
         return self.format_compact_summary(groups)
+
+
+class GitHubLogExtractor:
+    """
+    Fetches logs from GitHub Actions and extracts errors.
+
+    Uses the GitHubLogParser to parse and format errors from workflow run logs.
+    """
+
+    def __init__(self, github_token: Optional[str] = None):
+        from app.core.config import settings
+        self.parser = GitHubLogParser()
+        self.github_token = github_token or settings.github_token
+
+    async def fetch_and_parse_logs(self, owner: str, repo: str, run_id: int) -> str:
+        """
+        Fetch logs from GitHub Actions workflow run and extract errors.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            run_id: Workflow run ID
+
+        Returns:
+            Formatted error summary
+        """
+        from app.adapters.external.github.client import GitHubClient
+
+        try:
+            async with GitHubClient(token=self.github_token) as client:
+                jobs = await client.list_jobs_for_workflow_run(owner=owner, repo=repo, run_id=run_id)
+
+                failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
+
+                if not failed_jobs:
+                    logger.warning("github_no_failed_jobs", repo=f"{owner}/{repo}", run_id=run_id)
+                    return ""
+
+                all_errors = []
+
+                for job in failed_jobs:
+                    job_id = job.get("id")
+                    job_name = job.get("name", "unknown")
+
+                    try:
+                        logs = await client.download_job_logs(owner=owner, repo=repo, job_id=job_id)
+
+                        logger.debug(
+                            "github_logs_fetched",
+                            job_name=job_name,
+                            job_id=job_id,
+                            log_length=len(logs)
+                        )
+
+                        errors = self.parser.extract_errors(logs)
+
+                        for error in errors:
+                            error.step_name = f"{job_name} / {error.step_name}"
+                            all_errors.append(error)
+
+                    except Exception as e:
+                        logger.warning("github_job_log_fetch_failed", job_id=job_id, error=str(e))
+                        continue
+
+                if all_errors:
+                    groups = self.parser.group_errors(all_errors)
+                    summary = self.parser.format_compact_summary(groups)
+
+                    logger.info(
+                        "github_errors_extracted",
+                        repo=f"{owner}/{repo}",
+                        run_id=run_id,
+                        unique_errors=len(all_errors),
+                        error_groups=len(groups),
+                        summary_length=len(summary)
+                    )
+
+                    return summary
+
+                return ""
+
+        except Exception as e:
+            logger.error("github_log_extraction_failed", repo=f"{owner}/{repo}", run_id=run_id, error=str(e))
+            return ""
+
+    def parse_logs_from_text(self, log_content: str) -> str:
+        """
+        Parse logs from raw text content.
+
+        Args:
+            log_content: Raw log text
+
+        Returns:
+            Formatted error summary
+        """
+        return self.parser.extract_critical_logs(log_content)
