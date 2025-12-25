@@ -230,21 +230,21 @@ class PRCreatorService:
 
                 db.add(pr_record)
 
-                # Log creation attempt
+                # Log creation attempt (truncate fields to fit DB constraints)
                 creation_log = PRCreationLogTable(
                     id=creation_log_id,
                     incident_id=incident.incident_id,
                     pr_id=pr_id,
-                    repository_full=f"{owner}/{repo}",
-                    branch_name=branch_name,
-                    failure_type=analysis.category.value if analysis.category else "unknown",
-                    root_cause=analysis.root_cause,
-                    files_to_change=len(changed_files + config_files),
+                    repository_full=f"{owner}/{repo}"[:512],
+                    branch_name=branch_name[:255],
+                    failure_type=(analysis.category.value if analysis.category else "unknown")[:100],
+                    root_cause=analysis.root_cause[:512] if analysis.root_cause else None,
+                    files_to_change=len(changed_files + config_files + solution_file),
                     status="success",
                     duration_ms=int(
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                     ),
-                    pr_url=pr_result["html_url"],
+                    pr_url=pr_result["html_url"][:512] if pr_result.get("html_url") else None,
                 )
 
                 db.add(creation_log)
@@ -288,21 +288,22 @@ class PRCreatorService:
                     db_gen_err = get_db()
                     db = next(db_gen_err)
                 
+                # Truncate all fields to fit DB constraints
                 creation_log = PRCreationLogTable(
                     id=creation_log_id,
                     incident_id=incident.incident_id,
                     pr_id=None,
-                    repository_full=f"{owner}/{repo}",
-                    branch_name=self._generate_branch_name(incident, analysis),
-                    failure_type=analysis.category.value if analysis.category else "unknown",
-                    root_cause=analysis.root_cause,
+                    repository_full=f"{owner}/{repo}"[:512],
+                    branch_name=self._generate_branch_name(incident, analysis)[:255],
+                    failure_type=(analysis.category.value if analysis.category else "unknown")[:100],
+                    root_cause=analysis.root_cause[:512] if analysis.root_cause else None,
                     files_to_change=len(solution.get("code_changes", [])),
                     status="failed",
                     duration_ms=int(
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                     ),
-                    error_message=str(e),
-                    error_type=type(e).__name__[:36],  # Truncate to fit DB constraint
+                    error_message=str(e)[:5000] if e else None,  # Text field, be generous
+                    error_type=type(e).__name__[:100],  # Increased from 36 to 100
                 )
 
                 db.add(creation_log)
