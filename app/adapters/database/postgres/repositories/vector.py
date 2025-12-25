@@ -6,30 +6,15 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func, text, and_, or_
 from sqlalchemy.orm import Session
 import structlog
-import hashlib
-import json
 
 from app.adapters.database.postgres.models import IncidentTable
-from app.adapters.cache.redis import get_redis_cache, RedisCache
 from app.core.enums import IncidentSource, Severity, Outcome
 
 logger = structlog.get_logger(__name__)
 
 class VectorRepository:
-    def __init__(self, session: Session, enable_cache: bool = True):
+    def __init__(self, session: Session):
         self.session = session
-        self.enable_cache = enable_cache
-        self.cache: Optional[RedisCache] = None
-
-        if enable_cache:
-            self.cache = get_redis_cache()
-
-    def _generate_cache_key(self, prefix: str, *args) -> str:
-        """Generate deterministic cache key from arguments."""
-        combined = json.dumps(args, sort_keys=True, default=str)
-        hash_obj = hashlib.sha256(combined.encode())
-        hash_hex = hash_obj.hexdigest()[:16]
-        return f"vector:{prefix}:{hash_hex}"
 
     def store_embedding(
             self,
@@ -65,7 +50,7 @@ class VectorRepository:
             )
             raise
 
-    async def search_similar(
+    def search_similar(
             self,
             query_embedding: List[float],
             top_k: int = 5,
@@ -75,30 +60,6 @@ class VectorRepository:
             exclude_incident_id: Optional[str] = None,
             only_with_outcome: bool = False,
     ) -> List[Tuple[IncidentSource, float]]:
-        # Generate cache key (use first 100 embedding values for key)
-        cache_key = self._generate_cache_key(
-            "search",
-            query_embedding[:100],
-            top_k,
-            similarity_threshold,
-            source_filter.value if source_filter else None,
-            severity_filter.value if severity_filter else None,
-            exclude_incident_id,
-            only_with_outcome,
-        )
-
-        # Try to get from cache
-        if self.enable_cache and self.cache:
-            try:
-                await self.cache.connect()
-                cached = await self.cache.get(cache_key)
-                if cached:
-                    logger.info("vector_search_cache_hit", cache_key=cache_key, num_results=len(cached))
-                    # Reconstruct incidents from cached data
-                    return [(self._deserialize_incident(inc_data), sim) for inc_data, sim in cached]
-            except Exception as e:
-                logger.warning("vector_search_cache_failed", error=str(e))
-
         try:
             embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
@@ -131,15 +92,6 @@ class VectorRepository:
                 if float(similarity) >= similarity_threshold
             ]
 
-            # Cache the results
-            if self.enable_cache and self.cache:
-                try:
-                    cacheable = [(self._serialize_incident(inc), sim) for inc, sim in similar_incidents]
-                    await self.cache.set(cache_key, cacheable, ttl=21600)  # 6 hours
-                    logger.debug("vector_search_cached", cache_key=cache_key)
-                except Exception as e:
-                    logger.warning("vector_search_cache_set_failed", error=str(e))
-
             logger.info(
                 "vector_search_complete",
                 num_results=len(similar_incidents),
@@ -155,36 +107,6 @@ class VectorRepository:
                 top_k=top_k,
             )
             raise
-
-    def _serialize_incident(self, incident: IncidentTable) -> Dict[str, Any]:
-        """Serialize incident for caching (exclude embedding to save space)."""
-        return {
-            "incident_id": incident.incident_id,
-            "source": incident.source,
-            "severity": incident.severity,
-            "failure_type": incident.failure_type,
-            "error_message": incident.error_message,
-            "root_cause": incident.root_cause,
-            "confidence": incident.confidence,
-            "outcome": incident.outcome,
-            "created_at": incident.created_at.isoformat() if incident.created_at else None,
-            "updated_at": incident.updated_at.isoformat() if incident.updated_at else None,
-        }
-
-    def _deserialize_incident(self, data: Dict[str, Any]) -> IncidentTable:
-        """Deserialize incident from cache."""
-        incident = IncidentTable()
-        incident.incident_id = data["incident_id"]
-        incident.source = data["source"]
-        incident.severity = data["severity"]
-        incident.failure_type = data["failure_type"]
-        incident.error_message = data["error_message"]
-        incident.root_cause = data["root_cause"]
-        incident.confidence = data["confidence"]
-        incident.outcome = data["outcome"]
-        incident.created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
-        incident.updated_at = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None
-        return incident
 
     def search_by_incident(
             self,
