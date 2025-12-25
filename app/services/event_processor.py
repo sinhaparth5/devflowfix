@@ -85,14 +85,15 @@ class EventProcessor:
         self.default_environment = default_environment
         self.enable_notifications = enable_notifications
         self.enable_auto_remediation = enable_auto_remediation
-        self.pr_creator = pr_creator,
-        self.enable_auto_pr = enable_auto_pr,
+        self.pr_creator = pr_creator
+        self.enable_auto_pr = enable_auto_pr
         
         logger.info(
             "event_processor_initialized",
             environment=default_environment.value,
             notifications=enable_notifications,
             auto_remediation=enable_auto_remediation,
+            auto_pr_enabled=enable_auto_pr,
         )
     
     async def process(
@@ -399,12 +400,66 @@ class EventProcessor:
                 failure_type=analysis.category.value if analysis.category else "unknown",
             )
             
+            # Try to extract structured error information from logs for better context
+            enriched_context = incident.context.copy()
+            if incident.source == IncidentSource.GITHUB and incident.error_log:
+                try:
+                    from app.services.github_log_parser import GitHubLogParser
+                    parser = GitHubLogParser()
+                    errors = parser.extract_errors(incident.error_log)
+                    
+                    # Get list of changed files from context
+                    changed_files = enriched_context.get("changed_files", [])
+                    
+                    # Add file paths and line numbers to context
+                    if errors:
+                        error_files = {}
+                        for error in errors:
+                            if error.file_path:
+                                # If we have changed_files list, only include errors from those files
+                                if changed_files:
+                                    # Check if error file matches any changed file
+                                    should_include = any(
+                                        error.file_path.endswith(changed_file) or 
+                                        changed_file.endswith(error.file_path) or
+                                        error.file_path in changed_file or
+                                        changed_file in error.file_path
+                                        for changed_file in changed_files
+                                    )
+                                    if not should_include:
+                                        continue
+                                
+                                if error.file_path not in error_files:
+                                    error_files[error.file_path] = []
+                                error_info = {
+                                    "error_type": error.error_type,
+                                    "message": error.error_message,
+                                    "line": error.line_number,
+                                }
+                                error_files[error.file_path].append(error_info)
+                        
+                        if error_files:
+                            enriched_context["error_files"] = error_files
+                            logger.info(
+                                "structured_errors_extracted",
+                                incident_id=incident.incident_id,
+                                files_count=len(error_files),
+                                changed_files_count=len(changed_files) if changed_files else 0,
+                                filtered_by_changed_files=bool(changed_files),
+                            )
+                except Exception as parse_error:
+                    logger.warning(
+                        "failed_to_parse_structured_errors",
+                        incident_id=incident.incident_id,
+                        error=str(parse_error),
+                    )
+            
             # Generate solutions using LLM
             solution = await self.analyzer.llm.generate_solution(
                 error_log=incident.error_log,
                 failure_type=analysis.category.value if analysis.category else "unknown",
                 root_cause=analysis.root_cause or "Unknown root cause",
-                context=incident.context,
+                context=enriched_context,
                 repository_code=None,  # Can be extended to fetch from repository
             )
             
@@ -528,6 +583,18 @@ class EventProcessor:
 
             # Debug PR creation decision
             should_create = self._should_create_pr(analysis, incident)
+            
+            print(f"\n{'='*80}")
+            print(f"🔍 PR CREATION DECISION")
+            print(f"{'='*80}")
+            print(f"   Auto PR Enabled: {self.enable_auto_pr}")
+            print(f"   Has Code Changes: {bool(solution.get('code_changes'))}")
+            print(f"   Should Create PR: {should_create}")
+            print(f"   Confidence: {analysis.confidence:.2%}")
+            print(f"   Fixability: {analysis.fixability}")
+            print(f"   Repository: {incident.context.get('repository')}")
+            print(f"{'='*80}\n")
+            
             logger.info(
                 "pr_creation_decision",
                 incident_id=incident.incident_id,
@@ -631,7 +698,7 @@ class EventProcessor:
             self,
             analysis: AnalysisResult,
             incident: Incident,
-            min_confidence: float = 0.85,
+            min_confidence: float = 0.70,
     ) -> bool:
         """
         Determine if an automated fix PR should be created.
@@ -639,11 +706,23 @@ class EventProcessor:
         Args:
             analysis: Analysis result with failure classification
             incident: Incident details
-            min_confidence: Minimum confidence threshold (default: 0.85)
+            min_confidence: Minimum confidence threshold (default: 0.70)
         
         Returns:
             True if PR should created, False otherwise
         """
+        # Log all PR creation criteria for debugging
+        logger.info(
+            "pr_creation_criteria_check",
+            incident_id=incident.incident_id,
+            confidence=analysis.confidence,
+            min_confidence=min_confidence,
+            failure_type=analysis.category.value if analysis.category else "unknown",
+            fixability=str(analysis.fixability) if analysis.fixability else "unknown",
+            has_repository=bool(incident.context.get("repository")),
+            repository=incident.context.get("repository"),
+        )
+        
         if analysis.confidence < min_confidence:
             logger.info(
                 "pr_creation_skipped_low_confidence",
@@ -679,11 +758,11 @@ class EventProcessor:
             )
             return False
         
-        if incident.context.get("automate_pr"):
+        if incident.context.get("automated_pr"):
             logger.info(
                 "pr_creation_skipped_already_exists",
                 incident_id=incident.incident_id,
-                existint_pr=incident.context["automated_pr"].get("number"),
+                existing_pr=incident.context["automated_pr"].get("number"),
             )
             return False
         
@@ -1036,12 +1115,38 @@ class EventProcessor:
         context = {}
         
         if source == IncidentSource.GITHUB:
+            # Extract modified files from commits
+            modified_files = []
+            added_files = []
+            
+            # From workflow_run payload
+            if "workflow_run" in payload:
+                head_commit = payload.get("workflow_run", {}).get("head_commit", {})
+                modified_files.extend(head_commit.get("modified", []))
+                added_files.extend(head_commit.get("added", []))
+            
+            # From push payload
+            if "commits" in payload:
+                for commit in payload.get("commits", []):
+                    modified_files.extend(commit.get("modified", []))
+                    added_files.extend(commit.get("added", []))
+            
+            # From head_commit in push payload
+            if "head_commit" in payload:
+                head_commit = payload.get("head_commit", {})
+                modified_files.extend(head_commit.get("modified", []))
+                added_files.extend(head_commit.get("added", []))
+            
+            # Combine and deduplicate
+            all_changed_files = list(set(modified_files + added_files))
+            
             context = {
                 "repository": payload.get("repository", {}).get("full_name"),
                 "workflow": payload.get("workflow_run", {}).get("name"),
                 "branch": payload.get("workflow_run", {}).get("head_branch"),
                 "commit": payload.get("workflow_run", {}).get("head_sha"),
                 "run_id": payload.get("workflow_run", {}).get("id"),
+                "changed_files": all_changed_files if all_changed_files else None,
             }
         
         elif source == IncidentSource.KUBERNETES:
