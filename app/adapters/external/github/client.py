@@ -15,8 +15,10 @@ Provides HTTP client for interacting with GitHub API with:
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import httpx
+import hashlib
 
 from app.core.config import Settings
+from app.adapters.cache.redis import get_redis_cache, RedisCache
 from app.exceptions import GitHubAPIError
 from app.utils.logging import get_logger
 from app.utils.retry import retry
@@ -65,31 +67,38 @@ class GitHubClient:
         settings: Optional[Settings] = None,
         timeout: float = 30.0,
         max_retries: int = 3,
+        enable_cache: bool = True,
     ):
         """
         Initialize GitHub client.
-        
+
         Args:
             token: GitHub personal access token or app token
             settings: Application settings
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
+            enable_cache: Enable Redis caching for API responses
         """
         self.settings = settings or Settings()
         self.token = token or self.settings.github.token
         self.timeout = timeout
         self.max_retries = max_retries
-        
+        self.enable_cache = enable_cache
+        self.cache: Optional[RedisCache] = None
+
+        if enable_cache:
+            self.cache = get_redis_cache()
+
         if not self.token:
             logger.warning("github_client_no_token", message="GitHub token not configured")
-        
+
         self.client = httpx.AsyncClient(
             base_url=self.BASE_URL,
             timeout=timeout,
             headers=self._get_default_headers(),
             follow_redirects=True,
         )
-        
+
         self.circuit_breaker = CircuitBreaker(
             failure_threshold=5,
             success_threshold=2,
@@ -553,23 +562,52 @@ class GitHubClient:
         job_id: int,
     ) -> str:
         """
-        Download job logs.
-        
+        Download job logs with Redis caching (logs are immutable).
+
         Args:
             owner: Repository owner
             repo: Repository name
             job_id: Job ID
-            
+
         Returns:
             Log text
         """
+        # Generate cache key
+        cache_key = f"github:logs:{owner}:{repo}:{job_id}"
+
+        # Try to get from cache (logs never change once job completes)
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.info(
+                        "github_logs_cache_hit",
+                        owner=owner,
+                        repo=repo,
+                        job_id=job_id,
+                    )
+                    return cached
+            except Exception as e:
+                logger.warning("github_logs_cache_failed", error=str(e))
+
         endpoint = f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs"
-        
+
         try:
             response = await self.client.get(endpoint)
             response.raise_for_status()
-            return response.text
-        
+            logs = response.text
+
+            # Cache logs for 30 days (they never change)
+            if self.enable_cache and self.cache:
+                try:
+                    await self.cache.set(cache_key, logs, ttl=2592000)  # 30 days
+                    logger.debug("github_logs_cached", cache_key=cache_key, size=len(logs))
+                except Exception as e:
+                    logger.warning("github_logs_cache_set_failed", error=str(e))
+
+            return logs
+
         except httpx.HTTPError as e:
             logger.error(
                 "github_download_logs_error",
@@ -587,17 +625,41 @@ class GitHubClient:
         repo: str,
     ) -> Dict[str, Any]:
         """
-        Get repository information.
-        
+        Get repository information with Redis caching.
+
         Args:
             owner: Repository owner
             repo: Repository name
-            
+
         Returns:
             Repository data
         """
+        # Generate cache key
+        cache_key = f"github:repo:{owner}:{repo}"
+
+        # Try to get from cache
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.debug("github_repo_cache_hit", owner=owner, repo=repo)
+                    return cached
+            except Exception as e:
+                logger.warning("github_repo_cache_failed", error=str(e))
+
         endpoint = f"/repos/{owner}/{repo}"
-        return await self.get(endpoint)
+        repo_data = await self.get(endpoint)
+
+        # Cache for 1 hour (repo info changes infrequently)
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.set(cache_key, repo_data, ttl=3600)  # 1 hour
+                logger.debug("github_repo_cached", cache_key=cache_key)
+            except Exception as e:
+                logger.warning("github_repo_cache_set_failed", error=str(e))
+
+        return repo_data
     
     async def create_issue_comment(
         self,

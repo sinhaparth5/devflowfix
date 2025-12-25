@@ -3,6 +3,7 @@
 
 import json
 import re
+import hashlib
 from typing import Dict, Any, Optional, List
 import structlog
 
@@ -14,6 +15,7 @@ from app.adapters.ai.nvidia.prompts import (
     build_remediation_validation_prompt,
     build_solution_generation_prompt,
 )
+from app.adapters.cache.redis import get_redis_cache, RedisCache
 from app.core.enums import FailureType, Fixability, RemediationActionType
 from app.exceptions import NVIDIAAPIError
 
@@ -31,25 +33,54 @@ class LLMAdapter:
         model: Optional[str] = None,
         temperature: float = 0.1,
         max_tokens: int = 2000,
+        enable_cache: bool = True,
     ):
         """
         Initialize LLM adapter.
-        
+
         Args:
             model: Model identifier (defaults to settings)
             temperature: Sampling temperature (0.0 = deterministic)
             max_tokens: Maximum tokens in response
+            enable_cache: Enable Redis caching for LLM responses
         """
         self.client = NVIDIALLMClient(model=model)
         self.temperature = temperature
         self.max_tokens = max_tokens
-        
+        self.enable_cache = enable_cache
+        self.cache: Optional[RedisCache] = None
+
+        if enable_cache:
+            self.cache = get_redis_cache()
+
         logger.info(
             "llm_adapter_initialized",
             model=self.client.model,
             temperature=temperature,
             max_tokens=max_tokens,
+            cache_enabled=enable_cache,
         )
+
+    def _generate_cache_key(self, prefix: str, *args) -> str:
+        """
+        Generate deterministic cache key from arguments.
+
+        Args:
+            prefix: Cache key prefix (e.g., 'classify', 'root_cause')
+            *args: Arguments to hash for uniqueness
+
+        Returns:
+            Cache key string
+        """
+        # Combine all args into a single string
+        combined = json.dumps(args, sort_keys=True, default=str)
+
+        # Create SHA256 hash for uniqueness
+        hash_obj = hashlib.sha256(combined.encode())
+        hash_hex = hash_obj.hexdigest()[:16]  # Use first 16 chars
+
+        # Return prefixed key
+        return f"llm:{prefix}:{self.client.model}:{hash_hex}"
     
     async def classify(
         self,
@@ -59,14 +90,14 @@ class LLMAdapter:
         similar_incidents: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        Classify incident using LLM.
-        
+        Classify incident using LLM with Redis caching.
+
         Args:
             source: Incident source (github, argocd, kubernetes)
             error_log: Error log or message
             context: Additional context information
             similar_incidents: Optional similar incidents for context
-            
+
         Returns:
             Classification result dictionary with:
                 - failure_type: FailureType enum value
@@ -77,11 +108,35 @@ class LLMAdapter:
                 - reasoning: str
                 - key_indicators: List[str]
                 - suggested_parameters: Dict[str, Any]
-                
+
         Raises:
             NVIDIAAPIError: If API call fails
             ValueError: If response cannot be parsed
         """
+        # Generate cache key from inputs
+        cache_key = self._generate_cache_key(
+            "classify",
+            source,
+            error_log[:500],  # Use first 500 chars for caching
+            json.dumps(context, sort_keys=True, default=str),
+        )
+
+        # Try to get from cache
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.info(
+                        "llm_classify_cache_hit",
+                        source=source,
+                        cache_key=cache_key,
+                    )
+                    # Reconstruct enums from cached strings
+                    return self._normalize_classification(cached)
+            except Exception as e:
+                logger.warning("llm_classify_cache_failed", error=str(e))
+
         # Build prompt
         prompt = build_classification_prompt(
             source=source,
@@ -89,7 +144,7 @@ class LLMAdapter:
             context=context,
             similar_incidents=similar_incidents,
         )
-        
+
         logger.info(
             "llm_classify_start",
             source=source,
@@ -97,7 +152,7 @@ class LLMAdapter:
             has_similar_incidents=bool(similar_incidents),
             num_similar=len(similar_incidents) if similar_incidents else 0,
         )
-        
+
         try:
             # Call LLM
             response = await self.client.complete(
@@ -105,16 +160,34 @@ class LLMAdapter:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            
+
             # Extract text
             text = self.client.extract_text(response)
 
             # Parse JSON response
             classification = self._parse_classification_response(text)
-            
+
             # Validate and normalize
             classification = self._normalize_classification(classification)
-            
+
+            # Cache the result (serialize enums to strings for caching)
+            if self.enable_cache and self.cache:
+                try:
+                    cacheable = {
+                        "failure_type": classification["failure_type"].value if hasattr(classification["failure_type"], "value") else str(classification["failure_type"]),
+                        "root_cause": classification["root_cause"],
+                        "fixability": classification["fixability"].value if hasattr(classification["fixability"], "value") else str(classification["fixability"]),
+                        "confidence": classification["confidence"],
+                        "recommended_action": classification["recommended_action"].value if hasattr(classification["recommended_action"], "value") else str(classification["recommended_action"]),
+                        "reasoning": classification["reasoning"],
+                        "key_indicators": classification["key_indicators"],
+                        "suggested_parameters": classification["suggested_parameters"],
+                    }
+                    await self.cache.set(cache_key, cacheable, ttl=86400)  # 24 hours
+                    logger.debug("llm_classify_cached", cache_key=cache_key)
+                except Exception as e:
+                    logger.warning("llm_classify_cache_set_failed", error=str(e))
+
             logger.info(
                 "llm_classify_success",
                 failure_type=classification.get("failure_type"),
@@ -122,9 +195,9 @@ class LLMAdapter:
                 confidence=classification.get("confidence"),
                 action=classification.get("recommended_action"),
             )
-            
+
             return classification
-            
+
         except Exception as e:
             logger.error(
                 "llm_classify_failed",
@@ -312,37 +385,64 @@ class LLMAdapter:
         stack_trace: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Perform detailed root cause analysis.
-        
+        Perform detailed root cause analysis with Redis caching.
+
         Args:
             error_log: Error log or message
             context: Additional context
             stack_trace: Optional stack trace
-            
+
         Returns:
             Root cause analysis dictionary
         """
+        # Generate cache key
+        cache_key = self._generate_cache_key(
+            "root_cause",
+            error_log[:1000],
+            json.dumps(context, sort_keys=True, default=str),
+            stack_trace[:500] if stack_trace else "",
+        )
+
+        # Try to get from cache
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.info("llm_root_cause_cache_hit", cache_key=cache_key)
+                    return cached
+            except Exception as e:
+                logger.warning("llm_root_cause_cache_failed", error=str(e))
+
         prompt = build_root_cause_analysis_prompt(
             error_log=error_log,
             context=context,
             stack_trace=stack_trace,
         )
-        
+
         logger.info("llm_root_cause_analysis_start")
-        
+
         try:
             response = await self.client.complete(
                 prompt=prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            
+
             text = self.client.extract_text(response)
             analysis = self._parse_classification_response(text)
-            
+
+            # Cache the result
+            if self.enable_cache and self.cache:
+                try:
+                    await self.cache.set(cache_key, analysis, ttl=172800)  # 48 hours
+                    logger.debug("llm_root_cause_cached", cache_key=cache_key)
+                except Exception as e:
+                    logger.warning("llm_root_cause_cache_set_failed", error=str(e))
+
             logger.info("llm_root_cause_analysis_success")
             return analysis
-            
+
         except Exception as e:
             logger.error("llm_root_cause_analysis_failed", error=str(e))
             raise
@@ -354,42 +454,69 @@ class LLMAdapter:
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Validate proposed remediation action.
-        
+        Validate proposed remediation action with Redis caching.
+
         Args:
             failure_type: Classified failure type
             proposed_action: Proposed remediation action
             context: Incident context
-            
+
         Returns:
             Validation result dictionary
         """
+        # Generate cache key
+        cache_key = self._generate_cache_key(
+            "validate",
+            failure_type,
+            proposed_action,
+            json.dumps(context, sort_keys=True, default=str),
+        )
+
+        # Try to get from cache
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.info("llm_validate_cache_hit", cache_key=cache_key)
+                    return cached
+            except Exception as e:
+                logger.warning("llm_validate_cache_failed", error=str(e))
+
         prompt = build_remediation_validation_prompt(
             failure_type=failure_type,
             proposed_action=proposed_action,
             context=context,
         )
-        
+
         logger.info("llm_validate_remediation_start", action=proposed_action)
-        
+
         try:
             response = await self.client.complete(
                 prompt=prompt,
                 max_tokens=1000,
                 temperature=self.temperature,
             )
-            
+
             text = self.client.extract_text(response)
             validation = self._parse_classification_response(text)
-            
+
+            # Cache the result
+            if self.enable_cache and self.cache:
+                try:
+                    await self.cache.set(cache_key, validation, ttl=259200)  # 72 hours
+                    logger.debug("llm_validate_cached", cache_key=cache_key)
+                except Exception as e:
+                    logger.warning("llm_validate_cache_set_failed", error=str(e))
+
             logger.info(
                 "llm_validate_remediation_success",
                 is_safe=validation.get("is_safe"),
                 risk_level=validation.get("risk_level"),
             )
-            
+
             return validation
-            
+
         except Exception as e:
             logger.error("llm_validate_remediation_failed", error=str(e))
             raise
@@ -403,18 +530,42 @@ class LLMAdapter:
         repository_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Generate detailed solutions for fixing the error.
-        
+        Generate detailed solutions for fixing the error with Redis caching.
+
         Args:
             error_log: Error log or message
             failure_type: Classified failure type
             root_cause: Root cause analysis
             context: Incident context
             repository_code: Optional relevant code from repository
-            
+
         Returns:
             Solution dictionary with immediate_fix, code_changes, config_changes, etc.
         """
+        # Generate cache key
+        cache_key = self._generate_cache_key(
+            "solution",
+            failure_type,
+            root_cause[:500],
+            error_log[:300],
+            repository_code[:500] if repository_code else "",
+        )
+
+        # Try to get from cache
+        if self.enable_cache and self.cache:
+            try:
+                await self.cache.connect()
+                cached = await self.cache.get(cache_key)
+                if cached:
+                    logger.info(
+                        "llm_solution_cache_hit",
+                        cache_key=cache_key,
+                        failure_type=failure_type,
+                    )
+                    return cached
+            except Exception as e:
+                logger.warning("llm_solution_cache_failed", error=str(e))
+
         prompt = build_solution_generation_prompt(
             error_log=error_log,
             failure_type=failure_type,
@@ -422,23 +573,31 @@ class LLMAdapter:
             context=context,
             repository_code=repository_code,
         )
-        
+
         logger.info(
             "llm_generate_solution_start",
             failure_type=failure_type,
             has_code=bool(repository_code),
         )
-        
+
         try:
             response = await self.client.complete(
                 prompt=prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            
+
             text = self.client.extract_text(response)
             solution = self._parse_solution_response(text)
-            
+
+            # Cache the result
+            if self.enable_cache and self.cache:
+                try:
+                    await self.cache.set(cache_key, solution, ttl=604800)  # 7 days
+                    logger.debug("llm_solution_cached", cache_key=cache_key)
+                except Exception as e:
+                    logger.warning("llm_solution_cache_set_failed", error=str(e))
+
             logger.info(
                 "llm_generate_solution_success",
                 failure_type=failure_type,
@@ -447,7 +606,7 @@ class LLMAdapter:
                 num_config_changes=len(solution.get("configuration_changes") or []),
             )
             return solution
-            
+
         except Exception as e:
             logger.error(
                 "llm_generate_solution_failed",
