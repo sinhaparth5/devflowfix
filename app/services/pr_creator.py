@@ -130,7 +130,7 @@ class PRCreatorService:
             confidence=analysis.confidence,
         )
 
-        creation_log_id = f"log_{uuid4()}"
+        creation_log_id = f"log_{uuid4().hex[:32]}"  # log_ (4) + 32 hex chars = 36 total
         start_time = datetime.now(timezone.utc)
         
         try:
@@ -202,7 +202,7 @@ class PRCreatorService:
                 db = next(db_gen)
 
             try:
-                pr_id = f"pr_{uuid4()}"
+                pr_id = f"pr_{uuid4().hex[:33]}"  # pr_ (3) + 33 hex chars = 36 total
 
                 pr_record = PullRequestTable(
                     id=pr_id,
@@ -661,7 +661,23 @@ class PRCreatorService:
 *Please review carefully before applying the changes.*
 """
 
-            # Create the file in the repository
+            # Create the file in the repository (check if exists first)
+            sha = None
+            try:
+                # Try to get existing file to update it
+                existing_file = await github_client.get_file_contents(
+                    owner=owner,
+                    repo=repo,
+                    path="DEVFLOWFIX_SOLUTION.md",
+                    ref=branch,
+                )
+                sha = existing_file.get("sha")
+                logger.info("solution_file_exists_updating", sha=sha)
+            except Exception:
+                # File doesn't exist, will create new
+                logger.info("solution_file_not_found_creating_new")
+                pass
+
             await github_client.create_or_update_file(
                 owner=owner,
                 repo=repo,
@@ -669,7 +685,7 @@ class PRCreatorService:
                 message=f"docs: Add automated solution for {analysis.category.value}",
                 content=content,
                 branch=branch,
-                sha=None,  # New file
+                sha=sha,  # Will be None for new files, or existing SHA for updates
             )
 
             logger.info(
