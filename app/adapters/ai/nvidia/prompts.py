@@ -399,6 +399,7 @@ Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the foll
   "code_changes": [
     {{
       "file_path": "path/to/file.js",
+      "line_number": 42,
       "description": "What to change",
       "current_code": "problematic code snippet",
       "fixed_code": "corrected code snippet",
@@ -429,6 +430,11 @@ IMPORTANT:
 - All fields should be strings except arrays
 - If a section doesn't apply, use empty array [] or null
 - Ensure all JSON is valid and properly escaped
+- EXTRACT file_path from the error log (look for patterns like "src/file.js:42" or "at /path/to/file.py line 10")
+- EXTRACT line_number from the error message (look for "line 42", ":42:", "at line 42", etc.)
+- For code_changes, you MUST include the exact file_path and line_number from the error log
+- FOCUS ONLY on files that were recently modified/pushed (check context for changed_files list)
+- The fix should work for ANY programming language (Python, JavaScript, Java, Go, Ruby, etc.)
 
 Now generate the solution:"""
     

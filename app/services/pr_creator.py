@@ -289,7 +289,7 @@ class PRCreatorService:
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                     ),
                     error_message=str(e),
-                    error_type=type(e).__name__,
+                    error_type=type(e).__name__[:36],  # Truncate to fit DB constraint
                 )
 
                 db.add(creation_log)
@@ -368,11 +368,14 @@ class PRCreatorService:
         for change in code_changes:
             file_path = change.get("file_path")
             fixed_code = change.get("fixed_code")
+            current_code = change.get("current_code")
+            line_number = change.get("line_number")
             
             if not file_path or not fixed_code:
                 continue
 
             try:
+                # Fetch the current file content from the repository
                 try:
                     current_file = await github_client.get_file_contents(
                         owner=owner,
@@ -381,15 +384,117 @@ class PRCreatorService:
                         ref=branch,
                     )
                     sha = current_file["sha"]
-                except:
+                    
+                    # Decode the file content (GitHub returns base64-encoded content)
+                    import base64
+                    file_content = base64.b64decode(current_file["content"]).decode('utf-8')
+                    
+                    # Strategy 1: If current_code is provided, try exact match and replace
+                    if current_code and current_code.strip() in file_content:
+                        # Replace the specific problematic code
+                        updated_content = file_content.replace(current_code, fixed_code)
+                        logger.info(
+                            "code_replaced_using_exact_match",
+                            file=file_path,
+                            current_code_length=len(current_code),
+                            fixed_code_length=len(fixed_code),
+                        )
+                    # Strategy 2: Try fuzzy matching (ignoring whitespace differences)
+                    elif current_code:
+                        import re
+                        # Normalize whitespace in both current and file content
+                        normalized_current = re.sub(r'\\s+', ' ', current_code.strip())
+                        lines = file_content.split('\\n')
+                        
+                        replaced = False
+                        for i, line in enumerate(lines):
+                            normalized_line = re.sub(r'\\s+', ' ', line.strip())
+                            if normalized_current in normalized_line or normalized_line in normalized_current:
+                                # Found a fuzzy match, replace this line
+                                lines[i] = fixed_code if not fixed_code.endswith('\\n') else fixed_code.rstrip('\\n')
+                                replaced = True
+                                logger.info(
+                                    "code_replaced_using_fuzzy_match",
+                                    file=file_path,
+                                    line_number=i+1,
+                                )
+                                break
+                        
+                        if replaced:
+                            updated_content = '\\n'.join(lines)
+                        elif line_number is not None:
+                            # Fall back to line number
+                            if 0 < line_number <= len(lines):
+                                lines[line_number - 1] = fixed_code if not fixed_code.endswith('\\n') else fixed_code.rstrip('\\n')
+                                updated_content = '\\n'.join(lines)
+                                logger.info(
+                                    "code_replaced_at_line_fallback",
+                                    file=file_path,
+                                    line_number=line_number,
+                                )
+                            else:
+                                # Line number out of range
+                                updated_content = file_content + '\\n' + fixed_code
+                                logger.warning(
+                                    "line_number_out_of_range_appending",
+                                    file=file_path,
+                                    line_number=line_number,
+                                    total_lines=len(lines),
+                                )
+                        else:
+                            # No match found, use fixed_code as entire content
+                            updated_content = fixed_code
+                            logger.warning(
+                                "no_match_found_using_fixed_code",
+                                file=file_path,
+                            )
+                    # Strategy 3: Use line number if provided
+                    elif line_number is not None:
+                        # Use line number to apply the fix
+                        lines = file_content.split('\\n')
+                        if 0 < line_number <= len(lines):
+                            # Replace the line at the specified line number
+                            lines[line_number - 1] = fixed_code if not fixed_code.endswith('\\n') else fixed_code.rstrip('\\n')
+                            updated_content = '\\n'.join(lines)
+                            logger.info(
+                                "code_replaced_at_line",
+                                file=file_path,
+                                line_number=line_number,
+                            )
+                        else:
+                            # Line number out of range, append at the end
+                            updated_content = file_content + '\\n' + fixed_code
+                            logger.warning(
+                                "line_number_out_of_range_appending",
+                                file=file_path,
+                                line_number=line_number,
+                                total_lines=len(lines),
+                            )
+                    else:
+                        # No current_code or line_number, use fixed_code as entire file content
+                        updated_content = fixed_code
+                        logger.info(
+                            "using_fixed_code_as_entire_file",
+                            file=file_path,
+                        )
+                    
+                except Exception as fetch_error:
+                    # File doesn't exist, create new file with fixed_code
+                    logger.warning(
+                        "file_not_found_creating_new",
+                        file=file_path,
+                        error=str(fetch_error),
+                    )
                     sha = None
+                    updated_content = fixed_code
 
+                # Update the file in the repository
                 await github_client.create_or_update_file(
                     owner=owner,
                     repo=repo,
                     path=file_path,
                     message=f"fix: {change.get('explanation', 'Auto-fix code issue')}",
-                    content=fixed_code,
+                    content=updated_content,
                     branch=branch,
                     sha=sha,
                 )
@@ -408,6 +513,7 @@ class PRCreatorService:
                     "code_change_failed",
                     file=file_path,
                     error=str(e),
+                    exc_info=True,
                 )
         return changed_files
     
@@ -421,6 +527,10 @@ class PRCreatorService:
     ) -> List[str]:
         """Apply configuration changes."""
         changed_files = []
+        
+        # Handle None or empty config_changes
+        if not config_changes:
+            return changed_files
 
         for change in config_changes:
             file_path = change.get("file")

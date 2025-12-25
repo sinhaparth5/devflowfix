@@ -39,4 +39,5 @@ dependencies = [
     "bcrypt>=5.0.0",
     "gunicorn>=23.0.0",
     "orjson>=3.11.5",
+    "brotli>=1.2.0",
 ]

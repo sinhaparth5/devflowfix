@@ -117,16 +117,16 @@ class GitHubLogParser:
                 current_file = file_path
 
             # Use bounded quantifiers to prevent ReDoS
-            lint_match = re.search(r'(\d{1,6}:\d{1,6})\s+error\s+([^\n]{1,500}?)\s+(@[\w/-]{1,100})', cleaned)
+            lint_match = re.search(r'(\d{1,6}):(\d{1,6})\s+error\s+([^\n]{1,500}?)\s+(@[\w/-]{1,100})', cleaned)
             if lint_match and current_file:
-                location, message, rule = lint_match.groups()
+                line_num, col_num, message, rule = lint_match.groups()
                 
                 error = ErrorBlock(
                     step_name=current_step,
                     error_type='lint_error',
                     error_message=f"{message} ({rule})",
                     file_path=current_file,
-                    line_number=None,
+                    line_number=int(line_num) if line_num else None,
                     severity='medium'
                 )
                 
@@ -144,11 +144,18 @@ class GitHubLogParser:
                 if match:
                     error_msg = match.group(1) if match.lastindex else cleaned
                     
+                    # Try to extract line number from error message
+                    line_num = None
+                    line_match = re.search(r':line\s+(\d+)|:(\d+):', error_msg)
+                    if line_match:
+                        line_num = int(line_match.group(1) or line_match.group(2))
+                    
                     error = ErrorBlock(
                         step_name=current_step,
                         error_type=error_type,
                         error_message=error_msg.strip(),
-                        file_path=None,
+                        file_path=current_file,
+                        line_number=line_num,
                         severity=severity
                     )
                     
@@ -201,6 +208,12 @@ class GitHubLogParser:
             
             lines.append(f"{idx}. {group.error_type.upper()} [{group.severity}]")
             lines.append(f"   Step: {group.step_name}")
+            
+            # Show files affected
+            if group.files and '_general' not in group.files:
+                files_list = [f for f in group.files.keys() if f != '_general']
+                if files_list:
+                    lines.append(f"   Files: {', '.join(files_list[:3])}")
             
             file_count = 0
             for file_path, messages in sorted(group.files.items()):
@@ -269,6 +282,7 @@ class GitHubLogExtractor:
                     
                     try:
                         logs = await client.download_job_logs(owner=owner, repo=repo, job_id=job_id)
+                        print(f"\n{'='*80}\nGitHub Logs for Job: {job_name} (ID: {job_id})\n{'='*80}\n{logs}\n{'='*80}\n")
                         
                         errors = self.parser.extract_errors(logs)
                         
