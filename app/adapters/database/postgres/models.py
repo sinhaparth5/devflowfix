@@ -689,3 +689,78 @@ class UserDetailsTable(SQLModel, table=True):
     __table_args__ = (
         Index('idx_user_details_country_city', 'country', 'city'),
     )
+
+
+class JobStatus(str, enum.Enum):
+    """Background job status."""
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class JobType(str, enum.Enum):
+    """Types of background jobs."""
+    INCIDENT_ANALYSIS = "incident_analysis"
+    INCIDENT_REANALYSIS = "incident_reanalysis"
+    EXPORT_CSV = "export_csv"
+    EXPORT_PDF = "export_pdf"
+    BULK_UPDATE = "bulk_update"
+    BULK_DELETE = "bulk_delete"
+    PR_CREATION = "pr_creation"
+
+
+class BackgroundJobTable(SQLModel, table=True):
+    """
+    Background jobs table.
+
+    Tracks long-running asynchronous operations like exports, bulk updates, and PR creation.
+    Provides status tracking and progress monitoring for users.
+    """
+    __tablename__ = "background_jobs"
+
+    # Primary Key
+    job_id: str = Field(primary_key=True, max_length=50)
+
+    # Foreign Key to User (owner)
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
+
+    # Job Classification
+    job_type: JobType = Field(index=True)
+    status: JobStatus = Field(default=JobStatus.QUEUED, index=True)
+
+    # Progress Tracking
+    progress: int = Field(default=0, ge=0, le=100)
+    current_step: Optional[str] = Field(default=None, max_length=255)
+
+    # Timing
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None, index=True)
+    estimated_completion: Optional[datetime] = Field(default=None)
+
+    # Results
+    result: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Parameters (input data for the job)
+    parameters: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Result File (for exports)
+    result_file_path: Optional[str] = Field(default=None, max_length=512)
+    result_file_size: Optional[int] = Field(default=None)
+    result_file_type: Optional[str] = Field(default=None, max_length=50)
+
+    # Job Metadata
+    job_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+    __table_args__ = (
+        Index('idx_jobs_user_created', 'user_id', desc('created_at')),
+        Index('idx_jobs_status_created', 'status', desc('created_at')),
+        Index('idx_jobs_type_status', 'job_type', 'status'),
+    )
