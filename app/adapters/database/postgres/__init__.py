@@ -11,7 +11,10 @@ from .models import (
     GitHubTokenTable,
     PRCreationLogTable,
     PRStatus,
-    UserDetailsTable
+    UserDetailsTable,
+    BackgroundJobTable,
+    JobStatus,
+    JobType,
 )
 
 from .connection import (
@@ -45,6 +48,9 @@ __all__ = [
     "GitHubTokenTable",
     "PRCreationLogTable",
     "PRStatus",
+    "BackgroundJobTable",
+    "JobStatus",
+    "JobType",
     "DatabaseConfig",
     "DatabaseConnectionPool",
     "get_connection_pool",

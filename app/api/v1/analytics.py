@@ -4,12 +4,18 @@
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 import structlog
+import uuid
 
 from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
+from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.enums import IncidentSource, Severity, Outcome
+from app.api.v1.auth import get_current_active_user
+from app.core.schemas.jobs import JobType
+from app.services.export import CSVExportService, PDFExportService
 
 logger = structlog.get_logger(__name__)
 
@@ -19,17 +25,20 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 @router.get(
     "/dashboard",
     summary="Get dashboard summary",
-    description="Get comprehensive dashboard data including today, week, and month stats",
+    description="Get comprehensive dashboard data including today, week, and month stats for current user",
 )
 async def get_dashboard(
+    current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get dashboard summary for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
-        return analytics_repo.get_dashboard_summary()
+        return analytics_repo.get_dashboard_summary(user_id=user.user_id)
     except Exception as e:
-        logger.error("get_dashboard_failed", error=str(e))
+        logger.error("get_dashboard_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve dashboard data",
@@ -39,16 +48,19 @@ async def get_dashboard(
 @router.get(
     "/stats",
     summary="Get incident statistics",
-    description="Get incident counts and success rates with optional date filtering",
+    description="Get incident counts and success rates for current user with optional date filtering",
 )
 async def get_stats(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None, description="Filter from date"),
     end_date: Optional[datetime] = Query(None, description="Filter to date"),
     source: Optional[str] = Query(None, description="Filter by source"),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get incident statistics for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     source_enum = None
     if source:
         try:
@@ -58,15 +70,16 @@ async def get_stats(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid source: {source}",
             )
-    
+
     try:
         return analytics_repo.get_incident_stats(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
             source=source_enum,
         )
     except Exception as e:
-        logger.error("get_stats_failed", error=str(e))
+        logger.error("get_stats_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve statistics",
@@ -76,22 +89,26 @@ async def get_stats(
 @router.get(
     "/breakdown/source",
     summary="Get incidents by source",
-    description="Get incident count breakdown by source platform",
+    description="Get incident count breakdown by source platform for current user",
 )
 async def get_breakdown_by_source(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get incident breakdown by source for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_incidents_by_source(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_breakdown_by_source_failed", error=str(e))
+        logger.error("get_breakdown_by_source_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve source breakdown",
@@ -101,22 +118,26 @@ async def get_breakdown_by_source(
 @router.get(
     "/breakdown/severity",
     summary="Get incidents by severity",
-    description="Get incident count breakdown by severity level",
+    description="Get incident count breakdown by severity level for current user",
 )
 async def get_breakdown_by_severity(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get incident breakdown by severity for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_incidents_by_severity(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_breakdown_by_severity_failed", error=str(e))
+        logger.error("get_breakdown_by_severity_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve severity breakdown",
@@ -126,22 +147,26 @@ async def get_breakdown_by_severity(
 @router.get(
     "/breakdown/failure-type",
     summary="Get incidents by failure type",
-    description="Get incident count breakdown by failure type",
+    description="Get incident count breakdown by failure type for current user",
 )
 async def get_breakdown_by_failure_type(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get incident breakdown by failure type for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_incidents_by_failure_type(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_breakdown_by_failure_type_failed", error=str(e))
+        logger.error("get_breakdown_by_failure_type_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve failure type breakdown",
@@ -151,22 +176,26 @@ async def get_breakdown_by_failure_type(
 @router.get(
     "/breakdown/outcome",
     summary="Get incidents by outcome",
-    description="Get incident count breakdown by outcome status",
+    description="Get incident count breakdown by outcome status for current user",
 )
 async def get_breakdown_by_outcome(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get incident breakdown by outcome for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_incidents_by_outcome(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_breakdown_by_outcome_failed", error=str(e))
+        logger.error("get_breakdown_by_outcome_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve outcome breakdown",
@@ -176,22 +205,26 @@ async def get_breakdown_by_outcome(
 @router.get(
     "/trends",
     summary="Get incident trends",
-    description="Get incident trends over time with configurable granularity",
+    description="Get incident trends over time for current user with configurable granularity",
 )
 async def get_trends(
+    current_user: dict = Depends(get_current_active_user),
     days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
     granularity: str = Query("day", regex="^(hour|day|week)$", description="Time granularity"),
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
+    """Get incident trends for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_incident_trends(
+            user_id=user.user_id,
             days=days,
             granularity=granularity,
         )
     except Exception as e:
-        logger.error("get_trends_failed", error=str(e))
+        logger.error("get_trends_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve trends",
@@ -201,16 +234,19 @@ async def get_trends(
 @router.get(
     "/mttr",
     summary="Get Mean Time To Repair",
-    description="Get MTTR statistics including average, min, max, median, and p95",
+    description="Get MTTR statistics for current user including average, min, max, median, and p95",
 )
 async def get_mttr(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     source: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get MTTR statistics for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     source_enum = None
     if source:
         try:
@@ -220,15 +256,16 @@ async def get_mttr(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid source: {source}",
             )
-    
+
     try:
         return analytics_repo.get_mttr(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
             source=source_enum,
         )
     except Exception as e:
-        logger.error("get_mttr_failed", error=str(e))
+        logger.error("get_mttr_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve MTTR",
@@ -238,22 +275,26 @@ async def get_mttr(
 @router.get(
     "/auto-fix-rate",
     summary="Get auto-fix rate",
-    description="Get auto-fix vs escalation rate statistics",
+    description="Get auto-fix vs escalation rate statistics for current user",
 )
 async def get_auto_fix_rate(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get auto-fix rate statistics for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_auto_fix_rate(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_auto_fix_rate_failed", error=str(e))
+        logger.error("get_auto_fix_rate_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve auto-fix rate",
@@ -263,22 +304,26 @@ async def get_auto_fix_rate(
 @router.get(
     "/confidence-distribution",
     summary="Get confidence score distribution",
-    description="Get distribution of AI confidence scores across incidents",
+    description="Get distribution of AI confidence scores for current user's incidents",
 )
 async def get_confidence_distribution(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get confidence score distribution for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_confidence_distribution(
+            user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_confidence_distribution_failed", error=str(e))
+        logger.error("get_confidence_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve confidence distribution",
@@ -288,22 +333,25 @@ async def get_confidence_distribution(
 @router.get(
     "/remediation-success",
     summary="Get remediation success by action type",
-    description="Get success rates for each remediation action type",
+    description="Get success rates for each remediation action type for current user",
 )
 async def get_remediation_success(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
+    """Get remediation success rates for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_remediation_success_by_action_type(
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_remediation_success_failed", error=str(e))
+        logger.error("get_remediation_success_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve remediation success rates",
@@ -313,22 +361,25 @@ async def get_remediation_success(
 @router.get(
     "/feedback",
     summary="Get feedback summary",
-    description="Get summary of user feedback on remediations",
+    description="Get summary of user feedback on remediations for current user",
 )
 async def get_feedback_summary(
+    current_user: dict = Depends(get_current_active_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get feedback summary for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_feedback_summary(
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_feedback_summary_failed", error=str(e))
+        logger.error("get_feedback_summary_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve feedback summary",
@@ -338,24 +389,28 @@ async def get_feedback_summary(
 @router.get(
     "/top/failure-types",
     summary="Get top failure types",
-    description="Get most common failure types",
+    description="Get most common failure types for current user",
 )
 async def get_top_failure_types(
+    current_user: dict = Depends(get_current_active_user),
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
+    """Get top failure types for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_top_failure_types(
+            user_id=user.user_id,
             limit=limit,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_top_failure_types_failed", error=str(e))
+        logger.error("get_top_failure_types_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve top failure types",
@@ -365,24 +420,28 @@ async def get_top_failure_types(
 @router.get(
     "/top/repositories",
     summary="Get top repositories",
-    description="Get repositories with most incidents",
+    description="Get repositories with most incidents for current user",
 )
 async def get_top_repositories(
+    current_user: dict = Depends(get_current_active_user),
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
+    """Get top repositories for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
         return analytics_repo.get_top_repositories(
+            user_id=user.user_id,
             limit=limit,
             start_date=start_date,
             end_date=end_date,
         )
     except Exception as e:
-        logger.error("get_top_repositories_failed", error=str(e))
+        logger.error("get_top_repositories_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve top repositories",
@@ -392,18 +451,21 @@ async def get_top_repositories(
 @router.get(
     "/distribution/hourly",
     summary="Get hourly distribution",
-    description="Get incident count by hour of day",
+    description="Get incident count by hour of day for current user",
 )
 async def get_hourly_distribution(
+    current_user: dict = Depends(get_current_active_user),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ) -> Dict[int, int]:
+    """Get hourly distribution for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
-        return analytics_repo.get_hourly_distribution(days=days)
+        return analytics_repo.get_hourly_distribution(user_id=user.user_id, days=days)
     except Exception as e:
-        logger.error("get_hourly_distribution_failed", error=str(e))
+        logger.error("get_hourly_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve hourly distribution",
@@ -413,18 +475,21 @@ async def get_hourly_distribution(
 @router.get(
     "/distribution/daily",
     summary="Get daily distribution",
-    description="Get incident count by day of week",
+    description="Get incident count by day of week for current user",
 )
 async def get_daily_distribution(
+    current_user: dict = Depends(get_current_active_user),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
+    """Get daily distribution for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     try:
-        return analytics_repo.get_daily_distribution(days=days)
+        return analytics_repo.get_daily_distribution(user_id=user.user_id, days=days)
     except Exception as e:
-        logger.error("get_daily_distribution_failed", error=str(e))
+        logger.error("get_daily_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve daily distribution",
@@ -434,26 +499,30 @@ async def get_daily_distribution(
 @router.get(
     "/overview",
     summary="Get analytics overview",
-    description="Get a comprehensive overview for the frontend dashboard",
+    description="Get a comprehensive overview for current user's frontend dashboard",
 )
 async def get_analytics_overview(
+    current_user: dict = Depends(get_current_active_user),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Get comprehensive analytics overview for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
-    
+    user = current_user["user"]
+
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
-    
+
     try:
-        stats = analytics_repo.get_incident_stats(start_date=start_date)
-        by_source = analytics_repo.get_incidents_by_source(start_date=start_date)
-        by_severity = analytics_repo.get_incidents_by_severity(start_date=start_date)
-        by_outcome = analytics_repo.get_incidents_by_outcome(start_date=start_date)
-        trends = analytics_repo.get_incident_trends(days=days, granularity="day")
-        mttr = analytics_repo.get_mttr(start_date=start_date)
-        auto_fix = analytics_repo.get_auto_fix_rate(start_date=start_date)
-        top_failures = analytics_repo.get_top_failure_types(limit=5, start_date=start_date)
-        hourly = analytics_repo.get_hourly_distribution(days=days)
+        # SECURITY: Pass user_id to all repository methods
+        stats = analytics_repo.get_incident_stats(user_id=user.user_id, start_date=start_date)
+        by_source = analytics_repo.get_incidents_by_source(user_id=user.user_id, start_date=start_date)
+        by_severity = analytics_repo.get_incidents_by_severity(user_id=user.user_id, start_date=start_date)
+        by_outcome = analytics_repo.get_incidents_by_outcome(user_id=user.user_id, start_date=start_date)
+        trends = analytics_repo.get_incident_trends(user_id=user.user_id, days=days, granularity="day")
+        mttr = analytics_repo.get_mttr(user_id=user.user_id, start_date=start_date)
+        auto_fix = analytics_repo.get_auto_fix_rate(user_id=user.user_id, start_date=start_date)
+        top_failures = analytics_repo.get_top_failure_types(user_id=user.user_id, limit=5, start_date=start_date)
+        hourly = analytics_repo.get_hourly_distribution(user_id=user.user_id, days=days)
         
         return {
             "period": {
@@ -482,4 +551,76 @@ async def get_analytics_overview(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve analytics overview",
+        )
+
+@router.get(
+    "/export",
+    summary="Export analytics data",
+    description="Export analytics data to CSV or PDF format",
+)
+async def export_analytics(
+    format: str = Query(..., description="Export format (csv or pdf)", regex="^(csv|pdf)$"),
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Export analytics data to CSV or PDF.
+
+    Query parameters:
+    - format: csv or pdf (required)
+    - days: Number of days to analyze (1-365, default 30)
+
+    Returns the file directly for immediate download.
+    """
+    user = current_user["user"]
+    analytics_repo = AnalyticsRepository(db)
+
+    try:
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        # Gather analytics data
+        stats = analytics_repo.get_incident_stats(user_id=user.user_id, start_date=start_date)
+        by_source = analytics_repo.get_incidents_by_source(user_id=user.user_id, start_date=start_date)
+        by_severity = analytics_repo.get_incidents_by_severity(user_id=user.user_id, start_date=start_date)
+        by_failure_type = analytics_repo.get_top_failure_types(user_id=user.user_id, limit=10, start_date=start_date)
+
+        # Build data dictionary
+        data = {
+            "total_incidents": stats.get("total", 0),
+            "resolved_incidents": stats.get("resolved", 0),
+            "success_rate": stats.get("success_rate", 0),
+            "average_resolution_time_seconds": stats.get("avg_resolution_time"),
+            "incidents_by_source": by_source,
+            "incidents_by_severity": by_severity,
+            "incidents_by_failure_type": {item["failure_type"]: item["count"] for item in by_failure_type},
+        }
+
+        if format == "csv":
+            csv_service = CSVExportService()
+            file_path, file_size = csv_service.export_analytics(data)
+
+            return FileResponse(
+                path=file_path,
+                media_type="text/csv",
+                filename=f"analytics_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            )
+        else:  # pdf
+            pdf_service = PDFExportService()
+            file_path, file_size = pdf_service.export_analytics(
+                data,
+                title=f"DevFlowFix Analytics Report - Last {days} Days",
+            )
+
+            return FileResponse(
+                path=file_path,
+                media_type="application/pdf",
+                filename=f"analytics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            )
+
+    except Exception as e:
+        logger.error("analytics_export_error", error=str(e), format=format)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Export failed: {str(e)}",
         )

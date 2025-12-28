@@ -3,7 +3,6 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
 from fastapi import FastAPI, Request, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -11,7 +10,6 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 import structlog
 
 from app.core.config import settings
@@ -344,6 +342,9 @@ async def root():
             "analytics": "/api/v1/analytics",
             "incidents": "/api/v1/incidents",
             "user_details": "/api/v1/user-details",
+            "logs": "/api/v1/logs",
+            "jobs": "/api/v1/jobs",
+            "pr_management": "/api/v1/pr-management",
         },
     }
 
@@ -354,6 +355,8 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.incidents import router as incidents_router
 from app.api.v1.pr_management import router as pr_management_router
 from app.api.v1.user_details import router as user_details_router
+from app.api.v1.logs import router as logs_router
+from app.api.v1.jobs import router as jobs_router
 
 app.include_router(
     auth_router,
@@ -391,6 +394,18 @@ app.include_router(
     tags=["User Details"],
 )
 
+app.include_router(
+    logs_router,
+    prefix="/api/v1",
+    tags=["Application Logs"],
+)
+
+app.include_router(
+    jobs_router,
+    prefix="/api/v1",
+    tags=["Background Jobs"],
+)
+
 logger.info(
     "routers_registered",
     routers=[
@@ -400,6 +415,8 @@ logger.info(
         "/api/v1/analytics",
         "/api/v1/pr-management",
         "/api/v1/user-details",
+        "/api/v1/logs",
+        "/api/v1/jobs",
     ],
     webhook_endpoints=[
         "/api/v1/webhook/github/{user_id}",
@@ -412,5 +429,11 @@ logger.info(
         "/api/v1/pr-management/tokens",
         "/api/v1/pr-management/pulls",
         "/api/v1/pr-management/stats",
+    ],
+    job_endpoints=[
+        "/api/v1/jobs",
+        "/api/v1/jobs/{job_id}",
+        "/api/v1/jobs/stats/overview",
+        "/api/v1/jobs/active",
     ]
 )

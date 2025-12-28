@@ -167,6 +167,77 @@ class AuditLogTable(SQLModel, table=True):
         Index('idx_audit_created_desc', desc('created_at')),
     )
 
+
+class LogLevel(str, enum.Enum):
+    """Log severity levels."""
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class LogCategory(str, enum.Enum):
+    """Application log categories."""
+    WEBHOOK = "webhook"
+    LLM = "llm"
+    ANALYSIS = "analysis"
+    REMEDIATION = "remediation"
+    GITHUB = "github"
+    DATABASE = "database"
+    SYSTEM = "system"
+
+
+class ApplicationLogTable(SQLModel, table=True):
+    """
+    Application/Workflow log table.
+    Tracks the entire CI/CD failure detection and remediation workflow.
+    """
+    __tablename__ = "application_logs"
+
+    # Primary Key
+    log_id: str = Field(primary_key=True, max_length=50)
+
+    # Association
+    incident_id: Optional[str] = Field(default=None, foreign_key="incidents.incident_id", index=True, max_length=50)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.user_id", index=True, max_length=50)
+    session_id: Optional[str] = Field(default=None, max_length=50)
+
+    # Log Classification
+    level: LogLevel = Field(default=LogLevel.INFO, index=True)
+    category: LogCategory = Field(default=LogCategory.SYSTEM, index=True)
+
+    # Message
+    message: str = Field(sa_column=Column(Text))
+
+    # Workflow Stage (e.g., "webhook_received", "llm_analyzing", "remediation_executing")
+    stage: Optional[str] = Field(default=None, max_length=100, index=True)
+
+    # Details (JSON for flexible data storage)
+    details: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Error Information (if applicable)
+    error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    stack_trace: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # LLM Specific (if applicable)
+    llm_model: Optional[str] = Field(default=None, max_length=100)
+    llm_tokens_used: Optional[int] = Field(default=None)
+    llm_response_time_ms: Optional[int] = Field(default=None)
+
+    # Timing
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    duration_ms: Optional[int] = Field(default=None)  # For operations with measurable duration
+
+    __table_args__ = (
+        Index('idx_app_logs_incident', 'incident_id'),
+        Index('idx_app_logs_user', 'user_id'),
+        Index('idx_app_logs_level_created', 'level', desc('created_at')),
+        Index('idx_app_logs_category_created', 'category', desc('created_at')),
+        Index('idx_app_logs_stage', 'stage'),
+    )
+
+
 class IncidentTable(SQLModel, table=True):
     """
     Incident database table.
@@ -617,4 +688,79 @@ class UserDetailsTable(SQLModel, table=True):
 
     __table_args__ = (
         Index('idx_user_details_country_city', 'country', 'city'),
+    )
+
+
+class JobStatus(str, enum.Enum):
+    """Background job status."""
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class JobType(str, enum.Enum):
+    """Types of background jobs."""
+    INCIDENT_ANALYSIS = "incident_analysis"
+    INCIDENT_REANALYSIS = "incident_reanalysis"
+    EXPORT_CSV = "export_csv"
+    EXPORT_PDF = "export_pdf"
+    BULK_UPDATE = "bulk_update"
+    BULK_DELETE = "bulk_delete"
+    PR_CREATION = "pr_creation"
+
+
+class BackgroundJobTable(SQLModel, table=True):
+    """
+    Background jobs table.
+
+    Tracks long-running asynchronous operations like exports, bulk updates, and PR creation.
+    Provides status tracking and progress monitoring for users.
+    """
+    __tablename__ = "background_jobs"
+
+    # Primary Key
+    job_id: str = Field(primary_key=True, max_length=50)
+
+    # Foreign Key to User (owner)
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
+
+    # Job Classification
+    job_type: JobType = Field(index=True)
+    status: JobStatus = Field(default=JobStatus.QUEUED, index=True)
+
+    # Progress Tracking
+    progress: int = Field(default=0, ge=0, le=100)
+    current_step: Optional[str] = Field(default=None, max_length=255)
+
+    # Timing
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None, index=True)
+    estimated_completion: Optional[datetime] = Field(default=None)
+
+    # Results
+    result: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Parameters (input data for the job)
+    parameters: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Result File (for exports)
+    result_file_path: Optional[str] = Field(default=None, max_length=512)
+    result_file_size: Optional[int] = Field(default=None)
+    result_file_type: Optional[str] = Field(default=None, max_length=50)
+
+    # Job Metadata
+    job_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+    __table_args__ = (
+        Index('idx_jobs_user_created', 'user_id', desc('created_at')),
+        Index('idx_jobs_status_created', 'status', desc('created_at')),
+        Index('idx_jobs_type_status', 'job_type', 'status'),
     )

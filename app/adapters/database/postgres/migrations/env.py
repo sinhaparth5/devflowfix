@@ -12,7 +12,18 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '../
 
 # Import SQLModel and all models
 from sqlmodel import SQLModel
-from app.adapters.database.postgres import IncidentTable, FeedbackTable, RemediationHistoryTable, MetricTable, ConfigTable, UserTable, UserSessionTable, AuditLogTable, UserDetailsTable
+from app.adapters.database.postgres import (
+    IncidentTable,
+    FeedbackTable,
+    RemediationHistoryTable,
+    MetricTable,
+    ConfigTable,
+    UserTable,
+    UserSessionTable,
+    AuditLogTable,
+    UserDetailsTable,
+    BackgroundJobTable,
+)
 
 # Set target metadata for autogenerate
 target_metadata = SQLModel.metadata
