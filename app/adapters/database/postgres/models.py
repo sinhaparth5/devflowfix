@@ -167,6 +167,77 @@ class AuditLogTable(SQLModel, table=True):
         Index('idx_audit_created_desc', desc('created_at')),
     )
 
+
+class LogLevel(str, enum.Enum):
+    """Log severity levels."""
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class LogCategory(str, enum.Enum):
+    """Application log categories."""
+    WEBHOOK = "webhook"
+    LLM = "llm"
+    ANALYSIS = "analysis"
+    REMEDIATION = "remediation"
+    GITHUB = "github"
+    DATABASE = "database"
+    SYSTEM = "system"
+
+
+class ApplicationLogTable(SQLModel, table=True):
+    """
+    Application/Workflow log table.
+    Tracks the entire CI/CD failure detection and remediation workflow.
+    """
+    __tablename__ = "application_logs"
+
+    # Primary Key
+    log_id: str = Field(primary_key=True, max_length=50)
+
+    # Association
+    incident_id: Optional[str] = Field(default=None, foreign_key="incidents.incident_id", index=True, max_length=50)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.user_id", index=True, max_length=50)
+    session_id: Optional[str] = Field(default=None, max_length=50)
+
+    # Log Classification
+    level: LogLevel = Field(default=LogLevel.INFO, index=True)
+    category: LogCategory = Field(default=LogCategory.SYSTEM, index=True)
+
+    # Message
+    message: str = Field(sa_column=Column(Text))
+
+    # Workflow Stage (e.g., "webhook_received", "llm_analyzing", "remediation_executing")
+    stage: Optional[str] = Field(default=None, max_length=100, index=True)
+
+    # Details (JSON for flexible data storage)
+    details: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Error Information (if applicable)
+    error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    stack_trace: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # LLM Specific (if applicable)
+    llm_model: Optional[str] = Field(default=None, max_length=100)
+    llm_tokens_used: Optional[int] = Field(default=None)
+    llm_response_time_ms: Optional[int] = Field(default=None)
+
+    # Timing
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    duration_ms: Optional[int] = Field(default=None)  # For operations with measurable duration
+
+    __table_args__ = (
+        Index('idx_app_logs_incident', 'incident_id'),
+        Index('idx_app_logs_user', 'user_id'),
+        Index('idx_app_logs_level_created', 'level', desc('created_at')),
+        Index('idx_app_logs_category_created', 'category', desc('created_at')),
+        Index('idx_app_logs_stage', 'stage'),
+    )
+
+
 class IncidentTable(SQLModel, table=True):
     """
     Incident database table.
