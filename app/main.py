@@ -354,6 +354,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.incidents import router as incidents_router
 from app.api.v1.pr_management import router as pr_management_router
 from app.api.v1.user_details import router as user_details_router
+from app.api.v1.logs import router as logs_router
 
 app.include_router(
     auth_router,
@@ -389,6 +390,12 @@ app.include_router(
     user_details_router,
     prefix="/api/v1",
     tags=["User Details"],
+)
+
+app.include_router(
+    logs_router,
+    prefix="/api/v1",
+    tags=["Application Logs"],
 )
 
 logger.info(

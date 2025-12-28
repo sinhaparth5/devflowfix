@@ -2,13 +2,16 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 from datetime import datetime, timezone
-from typing import Optional, Annotated
+from typing import Optional, Annotated, AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Header, File, UploadFile, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import structlog
 import base64
 import httpx
+import asyncio
+import json
 
 from app.dependencies import get_db
 from app.adapters.database.postgres.repositories.users import (
@@ -1415,3 +1418,117 @@ async def oauth_github_login(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OAuth authentication failed",
         )
+
+# Audit Logs Streaming
+
+async def audit_log_stream(
+    user_id: str,
+    auth_service: AuthService,
+) -> AsyncIterator[str]:
+    """
+    Stream audit logs for a user in real-time using Server-Sent Events.
+    
+    Checks for new logs every 2 seconds and sends them to the client.
+    """
+    last_log_time = datetime.now(timezone.utc)
+    
+    try:
+        while True:
+            # Fetch new logs since last check
+            logs, _ = auth_service.audit_repo.get_by_user(
+                user_id=user_id,
+                start_date=last_log_time,
+                limit=50
+            )
+            
+            # Send each new log as an SSE event
+            for log in reversed(logs):  # Oldest first
+                log_data = {
+                    "log_id": log.log_id,
+                    "action": log.action,
+                    "resource_type": log.resource_type,
+                    "resource_id": log.resource_id,
+                    "success": log.success,
+                    "error_message": log.error_message,
+                    "ip_address": log.ip_address,
+                    "user_agent": log.user_agent,
+                    "details": log.details,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                }
+                
+                # SSE format: "data: {json}\n\n"
+                yield f"data: {json.dumps(log_data)}\n\n"
+                
+                # Update last log time
+                if log.created_at:
+                    last_log_time = max(last_log_time, log.created_at)
+            
+            # Wait before checking for new logs again
+            await asyncio.sleep(2)
+            
+    except asyncio.CancelledError:
+        # Client disconnected
+        logger.info("audit_log_stream_closed", user_id=user_id)
+        yield f"data: {json.dumps({'event': 'stream_closed'})}\n\n"
+
+
+@router.get(
+    "/logs/stream",
+    summary="Stream audit logs in real-time (SSE)",
+    responses={
+        200: {
+            "description": "Event stream of audit logs",
+            "content": {"text/event-stream": {}}
+        }
+    },
+)
+async def stream_audit_logs(
+    current_user: dict = Depends(get_current_active_user),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    Stream audit logs for the current user in real-time using Server-Sent Events (SSE).
+    
+    This endpoint keeps the connection open and sends new logs as they are created.
+    
+    Frontend Usage (TypeScript):
+    ```typescript
+    const eventSource = new EventSource('/api/v1/auth/logs/stream', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    eventSource.onmessage = (event) => {
+      const log = JSON.parse(event.data);
+      console.log('New log:', log);
+      // Update UI with new log
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('SSE error:', error);
+      eventSource.close();
+    };
+    
+    // Close when done
+    eventSource.close();
+    ```
+    
+    Returns:
+    - Event stream of audit log entries as JSON
+    - Each event contains: log_id, action, resource_type, success, timestamp, etc.
+    """
+    logger.info(
+        "audit_log_stream_started",
+        user_id=current_user["user"].user_id,
+    )
+    
+    return StreamingResponse(
+        audit_log_stream(current_user["user"].user_id, auth_service),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable buffering in nginx
+        },
+    )
