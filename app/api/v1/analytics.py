@@ -4,13 +4,18 @@
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 import structlog
+import uuid
 
 from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
+from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.enums import IncidentSource, Severity, Outcome
 from app.api.v1.auth import get_current_active_user
+from app.core.schemas.jobs import JobType
+from app.services.export import CSVExportService, PDFExportService
 
 logger = structlog.get_logger(__name__)
 
@@ -546,4 +551,76 @@ async def get_analytics_overview(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve analytics overview",
+        )
+
+@router.get(
+    "/export",
+    summary="Export analytics data",
+    description="Export analytics data to CSV or PDF format",
+)
+async def export_analytics(
+    format: str = Query(..., description="Export format (csv or pdf)", regex="^(csv|pdf)$"),
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Export analytics data to CSV or PDF.
+
+    Query parameters:
+    - format: csv or pdf (required)
+    - days: Number of days to analyze (1-365, default 30)
+
+    Returns the file directly for immediate download.
+    """
+    user = current_user["user"]
+    analytics_repo = AnalyticsRepository(db)
+
+    try:
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        # Gather analytics data
+        stats = analytics_repo.get_incident_stats(user_id=user.user_id, start_date=start_date)
+        by_source = analytics_repo.get_incidents_by_source(user_id=user.user_id, start_date=start_date)
+        by_severity = analytics_repo.get_incidents_by_severity(user_id=user.user_id, start_date=start_date)
+        by_failure_type = analytics_repo.get_top_failure_types(user_id=user.user_id, limit=10, start_date=start_date)
+
+        # Build data dictionary
+        data = {
+            "total_incidents": stats.get("total", 0),
+            "resolved_incidents": stats.get("resolved", 0),
+            "success_rate": stats.get("success_rate", 0),
+            "average_resolution_time_seconds": stats.get("avg_resolution_time"),
+            "incidents_by_source": by_source,
+            "incidents_by_severity": by_severity,
+            "incidents_by_failure_type": {item["failure_type"]: item["count"] for item in by_failure_type},
+        }
+
+        if format == "csv":
+            csv_service = CSVExportService()
+            file_path, file_size = csv_service.export_analytics(data)
+
+            return FileResponse(
+                path=file_path,
+                media_type="text/csv",
+                filename=f"analytics_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            )
+        else:  # pdf
+            pdf_service = PDFExportService()
+            file_path, file_size = pdf_service.export_analytics(
+                data,
+                title=f"DevFlowFix Analytics Report - Last {days} Days",
+            )
+
+            return FileResponse(
+                path=file_path,
+                media_type="application/pdf",
+                filename=f"analytics_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            )
+
+    except Exception as e:
+        logger.error("analytics_export_error", error=str(e), format=format)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Export failed: {str(e)}",
         )
