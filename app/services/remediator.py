@@ -16,6 +16,7 @@ This is the main entry point for executing remediations.
 import traceback
 from typing import Optional, Dict, Any
 from datetime import datetime
+from sqlalchemy.orm import Session
 
 from app.core.models.incident import Incident
 from app.core.models.remediation import RemediationPlan, RemediationResult
@@ -31,6 +32,8 @@ from app.exceptions import (
     RollbackFailedError,
 )
 from app.utils.logging import get_logger
+from app.utils.app_logger import AppLogger
+from app.adapters.database.postgres.models import LogCategory
 
 logger = get_logger(__name__)
 
@@ -91,6 +94,8 @@ class RemediatorService:
         skip_pre_validation: bool = False,
         skip_post_validation: bool = False,
         skip_blast_radius_check: bool = False,
+        db: Optional[Session] = None,
+        user_id: Optional[str] = None,
     ) -> RemediationResult:
         """
         Execute remediation with full validation workflow.
@@ -115,14 +120,34 @@ class RemediatorService:
         """
         start_time = datetime.now()
         execution_logs = []
-        
+
+        # Create application logger
+        app_logger = None
+        if db:
+            app_logger = AppLogger(
+                db=db,
+                incident_id=incident.incident_id,
+                user_id=user_id or incident.context.get("user_id"),
+            )
+
         logger.info(
             "remediation_service_start",
             incident_id=incident.incident_id,
             action_type=plan.action_type.value,
             risk_level=plan.risk_level.value,
         )
-        
+
+        # Log remediation start
+        if app_logger:
+            app_logger.remediation_start(
+                f"Starting remediation for {plan.action_type.value}",
+                details={
+                    "action_type": plan.action_type.value,
+                    "risk_level": plan.risk_level.value,
+                    "confidence": plan.confidence,
+                }
+            )
+
         try:
             # Step 1: Pre-validation checks
             if not skip_pre_validation:
@@ -215,7 +240,17 @@ class RemediatorService:
                 remediator=str(remediator),
             )
             execution_logs.append(f"Executing remediation: {remediator.get_action_type().value}")
-            
+
+            # Log remediation executing
+            if app_logger:
+                app_logger.remediation_executing(
+                    f"Executing {remediator.get_action_type().value} remediation",
+                    details={
+                        "remediator": str(remediator),
+                        "action_type": remediator.get_action_type().value,
+                    }
+                )
+
             remediation_result = await remediator.execute(incident, plan)
             
             execution_logs.extend(remediation_result.execution_logs)
@@ -287,9 +322,10 @@ class RemediatorService:
             
             # Update final result
             duration = (datetime.now() - start_time).seconds
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             remediation_result.duration_seconds = duration
             remediation_result.execution_logs = execution_logs
-            
+
             logger.info(
                 "remediation_service_complete",
                 incident_id=incident.incident_id,
@@ -297,7 +333,30 @@ class RemediatorService:
                 outcome=remediation_result.outcome.value,
                 duration=duration,
             )
-            
+
+            # Log remediation completion
+            if app_logger:
+                if remediation_result.success:
+                    app_logger.remediation_complete(
+                        f"Remediation completed successfully: {remediation_result.outcome.value}",
+                        duration_ms=duration_ms,
+                        details={
+                            "outcome": remediation_result.outcome.value,
+                            "action_type": plan.action_type.value,
+                            "success": True,
+                        }
+                    )
+                else:
+                    app_logger.error(
+                        f"Remediation failed: {remediation_result.error_message}",
+                        category=LogCategory.REMEDIATION,
+                        stage="remediation_executing",
+                        details={
+                            "outcome": remediation_result.outcome.value,
+                            "error": remediation_result.error_message,
+                        }
+                    )
+
             return remediation_result
         
         except Exception as e:
@@ -307,10 +366,19 @@ class RemediatorService:
                 error=str(e),
                 traceback=traceback.format_exc(),
             )
-            
+
+            # Log unexpected error
+            if app_logger:
+                app_logger.error(
+                    f"Unexpected error during remediation: {str(e)}",
+                    error_obj=e,
+                    category=LogCategory.REMEDIATION,
+                    stage="remediation_executing",
+                )
+
             duration = (datetime.now() - start_time).seconds
             execution_logs.append(f"ERROR: {str(e)}")
-            
+
             return RemediationResult(
                 success=False,
                 outcome=Outcome.FAILED,

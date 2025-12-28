@@ -18,6 +18,8 @@ from app.services.event_processor import EventProcessor
 from app.dependencies import get_db, get_event_processor, get_service_container
 from app.adapters.external.github.client import GitHubClient
 from app.services.github_log_parser import GitHubLogExtractor
+from app.utils.app_logger import AppLogger
+from app.adapters.database.postgres.models import LogCategory
 
 try:
     from app.api.v1.auth import get_current_active_user
@@ -355,12 +357,26 @@ async def receive_github_webhook(
     x_github_delivery: Optional[str] = Header(None),
     body: bytes = Depends(verify_github_webhook_signature),
     event_processor: EventProcessor = Depends(get_event_processor),
+    db: Session = Depends(get_db),
 ) -> WebhookResponse:
     """
     Receive and process GitHub webhook events with path-based authentication.
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
-    
+
+    # Create application logger
+    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+
+    # Log webhook received
+    app_logger.webhook_received(
+        f"GitHub {x_github_event} webhook received",
+        details={
+            "event_type": x_github_event,
+            "delivery_id": x_github_delivery,
+            "body_size": len(body) if body else 0,
+        }
+    )
+
     logger.info(
         "github_webhook_received",
         incident_id=incident_id,
@@ -395,7 +411,24 @@ async def receive_github_webhook(
     try:
         import json
         payload = json.loads(body.decode('utf-8'))
+
+        # Log successful parsing
+        app_logger.webhook_parsed(
+            "Webhook payload parsed successfully",
+            details={
+                "event_type": x_github_event,
+                "payload_keys": list(payload.keys())[:10],  # First 10 keys
+            }
+        )
+
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        app_logger.error(
+            f"Failed to parse webhook JSON: {str(e)}",
+            error_obj=e,
+            category=LogCategory.WEBHOOK,
+            stage="webhook_parsing",
+        )
+
         logger.error(
             "github_webhook_invalid_json",
             user_id=user_id,
@@ -408,8 +441,14 @@ async def receive_github_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON payload: {e}",
         )
-    
+
     if not is_github_failure_event(x_github_event, payload):
+        app_logger.info(
+            f"Event {x_github_event} is not a failure event, skipping",
+            category=LogCategory.WEBHOOK,
+            stage="webhook_filtered",
+        )
+
         return WebhookResponse(
             incident_id=incident_id,
             acknowledged=True,
@@ -424,7 +463,18 @@ async def receive_github_webhook(
     if "context" not in normalized_payload:
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
-    
+
+    # Log queuing for background processing
+    app_logger.info(
+        "Webhook queued for background processing",
+        category=LogCategory.WEBHOOK,
+        stage="webhook_queued",
+        details={
+            "source": "github",
+            "event_type": x_github_event,
+        }
+    )
+
     background_tasks.add_task(
         process_webhook_async,
         event_processor,
@@ -433,7 +483,7 @@ async def receive_github_webhook(
         incident_id,
         user_id,
     )
-    
+
     logger.info(
         "github_webhook_queued",
         incident_id=incident_id,

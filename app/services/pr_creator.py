@@ -23,6 +23,8 @@ from app.adapters.database.postgres.models import (
 )
 from app.services.github_token_manager import GitHubTokenManager
 from app.core.enums import FailureType
+from app.utils.app_logger import AppLogger
+from app.adapters.database.postgres.models import LogCategory
 
 logger = structlog.get_logger(__name__)
 
@@ -121,6 +123,15 @@ class PRCreatorService:
         # Create authenticated GitHub client for this repo
         github_client = GitHubClient(token=token)
 
+        # Create application logger
+        app_logger = None
+        if db_session:
+            app_logger = AppLogger(
+                db=db_session,
+                incident_id=incident.incident_id,
+                user_id=user_id,
+            )
+
         logger.info(
             "pr_creation_start",
             incident_id=incident.incident_id,
@@ -130,9 +141,21 @@ class PRCreatorService:
             confidence=analysis.confidence,
         )
 
+        # Log PR creation start
+        if app_logger:
+            app_logger.github_pr_creating(
+                f"Creating PR in {owner}/{repo} for {analysis.category.value}",
+                details={
+                    "repository": f"{owner}/{repo}",
+                    "failure_type": analysis.category.value,
+                    "confidence": analysis.confidence,
+                    "base_branch": base_branch,
+                }
+            )
+
         creation_log_id = f"log_{uuid4()}"
         start_time = datetime.now(timezone.utc)
-        
+
         try:
             branch_name = self._generate_branch_name(incident, analysis)
             await self._create_branch(
@@ -249,6 +272,20 @@ class PRCreatorService:
                 files_changed=len(changed_files + config_files),
             )
 
+            # Log PR created successfully
+            if app_logger:
+                app_logger.github_pr_created(
+                    f"PR #{pr_result['number']} created successfully",
+                    pr_url=pr_result["html_url"],
+                    details={
+                        "pr_number": pr_result["number"],
+                        "pr_id": pr_id,
+                        "branch_name": branch_name,
+                        "files_changed": len(changed_files + config_files),
+                        "failure_type": analysis.category.value,
+                    }
+                )
+
             return {
                 **pr_result,
                 "pr_id": pr_id,
@@ -265,6 +302,19 @@ class PRCreatorService:
                 error=str(e),
                 exc_info=True,
             )
+
+            # Log PR creation error
+            if app_logger:
+                app_logger.error(
+                    f"Failed to create PR in {owner}/{repo}: {str(e)}",
+                    error_obj=e,
+                    category=LogCategory.GITHUB,
+                    stage="github_pr_creating",
+                    details={
+                        "repository": f"{owner}/{repo}",
+                        "error_type": type(e).__name__,
+                    }
+                )
 
             # Log failed attempt
             db_gen_err = None

@@ -4,7 +4,9 @@
 import json
 import re
 import hashlib
+import time
 from typing import Dict, Any, Optional, List
+from sqlalchemy.orm import Session
 import structlog
 
 from app.adapters.ai.nvidia.client import NVIDIALLMClient
@@ -18,6 +20,8 @@ from app.adapters.ai.nvidia.prompts import (
 from app.adapters.cache.redis import get_redis_cache, RedisCache
 from app.core.enums import FailureType, Fixability, RemediationActionType
 from app.exceptions import NVIDIAAPIError
+from app.utils.app_logger import AppLogger
+from app.adapters.database.postgres.models import LogCategory
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +38,9 @@ class LLMAdapter:
         temperature: float = 0.1,
         max_tokens: int = 2000,
         enable_cache: bool = True,
+        db: Optional[Session] = None,
+        incident_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ):
         """
         Initialize LLM adapter.
@@ -43,12 +50,26 @@ class LLMAdapter:
             temperature: Sampling temperature (0.0 = deterministic)
             max_tokens: Maximum tokens in response
             enable_cache: Enable Redis caching for LLM responses
+            db: Database session for application logging
+            incident_id: Incident ID for logging context
+            user_id: User ID for logging context
         """
         self.client = NVIDIALLMClient(model=model)
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.enable_cache = enable_cache
         self.cache: Optional[RedisCache] = None
+        self.db = db
+        self.incident_id = incident_id
+        self.user_id = user_id
+        self.app_logger: Optional[AppLogger] = None
+
+        if db:
+            self.app_logger = AppLogger(
+                db=db,
+                incident_id=incident_id,
+                user_id=user_id,
+            )
 
         if enable_cache:
             self.cache = get_redis_cache()
@@ -153,6 +174,20 @@ class LLMAdapter:
             num_similar=len(similar_incidents) if similar_incidents else 0,
         )
 
+        # Log LLM analysis start
+        if self.app_logger:
+            self.app_logger.llm_start(
+                f"Starting LLM classification for {source} incident",
+                model=self.client.model,
+                details={
+                    "source": source,
+                    "error_log_length": len(error_log),
+                    "similar_incidents_count": len(similar_incidents) if similar_incidents else 0,
+                }
+            )
+
+        llm_start_time = time.time()
+
         try:
             # Call LLM
             response = await self.client.complete(
@@ -163,6 +198,14 @@ class LLMAdapter:
 
             # Extract text
             text = self.client.extract_text(response)
+
+            # Calculate LLM response time
+            llm_response_time_ms = int((time.time() - llm_start_time) * 1000)
+
+            # Get token usage if available (NVIDIA API returns usage)
+            tokens_used = None
+            if hasattr(response, 'usage') and response.usage:
+                tokens_used = getattr(response.usage, 'total_tokens', None)
 
             # Parse JSON response
             classification = self._parse_classification_response(text)
@@ -196,6 +239,21 @@ class LLMAdapter:
                 action=classification.get("recommended_action"),
             )
 
+            # Log LLM completion
+            if self.app_logger:
+                self.app_logger.llm_complete(
+                    f"LLM classification completed: {classification.get('failure_type')}",
+                    model=self.client.model,
+                    tokens_used=tokens_used,
+                    response_time_ms=llm_response_time_ms,
+                    details={
+                        "failure_type": str(classification.get("failure_type")),
+                        "fixability": str(classification.get("fixability")),
+                        "confidence": classification.get("confidence"),
+                        "recommended_action": str(classification.get("recommended_action")),
+                    }
+                )
+
             return classification
 
         except Exception as e:
@@ -205,6 +263,17 @@ class LLMAdapter:
                 source=source,
                 exc_info=True,
             )
+
+            # Log error
+            if self.app_logger:
+                self.app_logger.error(
+                    f"LLM classification failed: {str(e)}",
+                    error_obj=e,
+                    category=LogCategory.LLM,
+                    stage="llm_analyzing",
+                    details={"source": source}
+                )
+
             raise
     
     def _parse_classification_response(self, text: str) -> Dict[str, Any]:
@@ -580,6 +649,20 @@ class LLMAdapter:
             has_code=bool(repository_code),
         )
 
+        # Log LLM solution generation start
+        if self.app_logger:
+            self.app_logger.llm_start(
+                f"Generating solution for {failure_type} failure",
+                model=self.client.model,
+                details={
+                    "failure_type": failure_type,
+                    "root_cause": root_cause[:200],
+                    "has_repository_code": bool(repository_code),
+                }
+            )
+
+        llm_start_time = time.time()
+
         try:
             response = await self.client.complete(
                 prompt=prompt,
@@ -588,6 +671,15 @@ class LLMAdapter:
             )
 
             text = self.client.extract_text(response)
+
+            # Calculate LLM response time
+            llm_response_time_ms = int((time.time() - llm_start_time) * 1000)
+
+            # Get token usage if available
+            tokens_used = None
+            if hasattr(response, 'usage') and response.usage:
+                tokens_used = getattr(response.usage, 'total_tokens', None)
+
             solution = self._parse_solution_response(text)
 
             # Cache the result
@@ -605,6 +697,22 @@ class LLMAdapter:
                 has_code_changes=bool(solution.get("code_changes")),
                 num_config_changes=len(solution.get("configuration_changes") or []),
             )
+
+            # Log LLM completion
+            if self.app_logger:
+                self.app_logger.llm_complete(
+                    f"Solution generated for {failure_type} failure",
+                    model=self.client.model,
+                    tokens_used=tokens_used,
+                    response_time_ms=llm_response_time_ms,
+                    details={
+                        "failure_type": failure_type,
+                        "has_immediate_fix": bool(solution.get("immediate_fix")),
+                        "code_changes_count": len(solution.get("code_changes") or []),
+                        "config_changes_count": len(solution.get("configuration_changes") or []),
+                    }
+                )
+
             return solution
 
         except Exception as e:
@@ -614,6 +722,17 @@ class LLMAdapter:
                 error=str(e),
                 exc_info=True,
             )
+
+            # Log error
+            if self.app_logger:
+                self.app_logger.error(
+                    f"LLM solution generation failed: {str(e)}",
+                    error_obj=e,
+                    category=LogCategory.LLM,
+                    stage="llm_analyzing",
+                    details={"failure_type": failure_type}
+                )
+
             raise
     
     async def close(self):
