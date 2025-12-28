@@ -25,13 +25,18 @@ class AnalyticsRepository:
     
     def get_incident_stats(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         source: Optional[IncidentSource] = None,
     ) -> Dict[str, Any]:
         try:
             query = self.session.query(IncidentTable)
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -82,6 +87,7 @@ class AnalyticsRepository:
     
     def get_incidents_by_source(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, int]:
@@ -90,7 +96,11 @@ class AnalyticsRepository:
                 IncidentTable.source,
                 func.count(IncidentTable.incident_id)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -106,6 +116,7 @@ class AnalyticsRepository:
     
     def get_incidents_by_severity(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, int]:
@@ -114,7 +125,11 @@ class AnalyticsRepository:
                 IncidentTable.severity,
                 func.count(IncidentTable.incident_id)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -130,6 +145,7 @@ class AnalyticsRepository:
     
     def get_incidents_by_failure_type(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, int]:
@@ -138,7 +154,11 @@ class AnalyticsRepository:
                 IncidentTable.failure_type,
                 func.count(IncidentTable.incident_id)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -154,6 +174,7 @@ class AnalyticsRepository:
     
     def get_incidents_by_outcome(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, int]:
@@ -162,7 +183,11 @@ class AnalyticsRepository:
                 IncidentTable.outcome,
                 func.count(IncidentTable.incident_id)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -178,12 +203,13 @@ class AnalyticsRepository:
     
     def get_incident_trends(
         self,
+        user_id: Optional[str] = None,
         days: int = 30,
         granularity: str = "day",
     ) -> List[Dict[str, Any]]:
         try:
             start_date = datetime.now(timezone.utc) - timedelta(days=days)
-            
+
             if granularity == "hour":
                 date_trunc = func.date_trunc('hour', IncidentTable.created_at)
             elif granularity == "day":
@@ -192,7 +218,7 @@ class AnalyticsRepository:
                 date_trunc = func.date_trunc('week', IncidentTable.created_at)
             else:
                 date_trunc = func.date_trunc('day', IncidentTable.created_at)
-            
+
             query = self.session.query(
                 date_trunc.label('period'),
                 func.count(IncidentTable.incident_id).label('total'),
@@ -200,7 +226,13 @@ class AnalyticsRepository:
                 func.count(case((IncidentTable.outcome == Outcome.FAILED.value, 1))).label('failed'),
             ).filter(
                 IncidentTable.created_at >= start_date
-            ).group_by(
+            )
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
+            query = query.group_by(
                 date_trunc
             ).order_by(
                 date_trunc
@@ -226,6 +258,7 @@ class AnalyticsRepository:
     
     def get_mttr(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         source: Optional[IncidentSource] = None,
@@ -241,7 +274,11 @@ class AnalyticsRepository:
                 IncidentTable.outcome == Outcome.SUCCESS.value,
                 IncidentTable.resolution_time_seconds.isnot(None),
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -280,6 +317,7 @@ class AnalyticsRepository:
     
     def get_confidence_distribution(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, int]:
@@ -287,7 +325,11 @@ class AnalyticsRepository:
             query = self.session.query(IncidentTable.confidence).filter(
                 IncidentTable.confidence.isnot(None)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -398,6 +440,7 @@ class AnalyticsRepository:
     
     def get_top_failure_types(
         self,
+        user_id: Optional[str] = None,
         limit: int = 10,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
@@ -409,7 +452,11 @@ class AnalyticsRepository:
             ).filter(
                 IncidentTable.failure_type.isnot(None)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -429,6 +476,7 @@ class AnalyticsRepository:
     
     def get_top_repositories(
         self,
+        user_id: Optional[str] = None,
         limit: int = 10,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
@@ -440,6 +488,10 @@ class AnalyticsRepository:
             ).filter(
                 IncidentTable.context['repository'].isnot(None)
             )
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
 
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
@@ -460,17 +512,24 @@ class AnalyticsRepository:
     
     def get_hourly_distribution(
         self,
+        user_id: Optional[str] = None,
         days: int = 30,
     ) -> Dict[int, int]:
         try:
             start_date = datetime.now(timezone.utc) - timedelta(days=days)
-            
+
             query = self.session.query(
                 func.extract('hour', IncidentTable.created_at).label('hour'),
                 func.count(IncidentTable.incident_id).label('count'),
             ).filter(
                 IncidentTable.created_at >= start_date
-            ).group_by(
+            )
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
+            query = query.group_by(
                 func.extract('hour', IncidentTable.created_at)
             ).order_by('hour')
             
@@ -488,17 +547,24 @@ class AnalyticsRepository:
     
     def get_daily_distribution(
         self,
+        user_id: Optional[str] = None,
         days: int = 30,
     ) -> Dict[str, int]:
         try:
             start_date = datetime.now(timezone.utc) - timedelta(days=days)
-            
+
             query = self.session.query(
                 func.to_char(IncidentTable.created_at, 'Day').label('day'),
                 func.count(IncidentTable.incident_id).label('count'),
             ).filter(
                 IncidentTable.created_at >= start_date
-            ).group_by(
+            )
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
+            query = query.group_by(
                 func.to_char(IncidentTable.created_at, 'Day')
             )
             
@@ -512,6 +578,7 @@ class AnalyticsRepository:
     
     def get_auto_fix_rate(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
@@ -519,7 +586,11 @@ class AnalyticsRepository:
             query = self.session.query(IncidentTable).filter(
                 IncidentTable.outcome.isnot(None)
             )
-            
+
+            # SECURITY: Filter by user_id if provided
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
+
             if start_date:
                 query = query.filter(IncidentTable.created_at >= start_date)
             if end_date:
@@ -599,18 +670,19 @@ class AnalyticsRepository:
             logger.error("get_metrics_failed", error=str(e))
             raise
     
-    def get_dashboard_summary(self) -> Dict[str, Any]:
+    def get_dashboard_summary(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         try:
             today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             week_ago = today - timedelta(days=7)
             month_ago = today - timedelta(days=30)
-            
-            today_stats = self.get_incident_stats(start_date=today)
-            week_stats = self.get_incident_stats(start_date=week_ago)
-            month_stats = self.get_incident_stats(start_date=month_ago)
-            
-            mttr = self.get_mttr(start_date=month_ago)
-            auto_fix = self.get_auto_fix_rate(start_date=month_ago)
+
+            # SECURITY: Pass user_id to all sub-methods
+            today_stats = self.get_incident_stats(user_id=user_id, start_date=today)
+            week_stats = self.get_incident_stats(user_id=user_id, start_date=week_ago)
+            month_stats = self.get_incident_stats(user_id=user_id, start_date=month_ago)
+
+            mttr = self.get_mttr(user_id=user_id, start_date=month_ago)
+            auto_fix = self.get_auto_fix_rate(user_id=user_id, start_date=month_ago)
             feedback = self.get_feedback_summary(start_date=month_ago)
             
             return {

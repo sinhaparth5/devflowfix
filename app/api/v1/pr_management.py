@@ -23,11 +23,6 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/pr-management", tags=["PR Management"])
 
-
-# ============================================================================
-# GitHub Token Management Endpoints
-# ============================================================================
-
 @router.post(
     "/tokens/register",
     summary="Register GitHub token",
@@ -187,17 +182,13 @@ async def deactivate_github_token(
             detail=f"Failed to deactivate token: {str(e)}",
         )
 
-
-# ============================================================================
-# PR Tracking Endpoints
-# ============================================================================
-
 @router.get(
     "/pulls",
     summary="List automated PRs",
-    description="List pull requests created by DevFlowFix",
+    description="List pull requests created by DevFlowFix for current user",
 )
 async def list_pull_requests(
+    current_user: dict = Depends(get_current_active_user),
     incident_id: Optional[str] = Query(None, description="Filter by incident ID"),
     repository: Optional[str] = Query(None, description="Filter by repository (owner/repo)"),
     status_filter: Optional[str] = Query(None, description="Filter by PR status"),
@@ -206,8 +197,8 @@ async def list_pull_requests(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    List automated pull requests.
-    
+    List automated pull requests for the current authenticated user only.
+
     **Statuses:**
     - `created` - PR created
     - `open` - PR is open
@@ -218,17 +209,25 @@ async def list_pull_requests(
     - `closed` - PR closed
     - `failed` - PR creation failed
     """
-    from app.adapters.database.postgres.models import PullRequestTable
-    
+    from app.adapters.database.postgres.models import PullRequestTable, IncidentTable
+
+    user = current_user["user"]
+
     try:
-        query = db.query(PullRequestTable)
-        
+        # SECURITY: Only show PRs for incidents belonging to this user
+        query = db.query(PullRequestTable).join(
+            IncidentTable,
+            PullRequestTable.incident_id == IncidentTable.incident_id
+        ).filter(
+            IncidentTable.user_id == user.user_id
+        )
+
         if incident_id:
             query = query.filter(PullRequestTable.incident_id == incident_id)
-        
+
         if repository:
             query = query.filter(PullRequestTable.repository_full == repository)
-        
+
         if status_filter:
             query = query.filter(PullRequestTable.status == status_filter)
         
@@ -285,18 +284,28 @@ async def list_pull_requests(
 )
 async def get_pull_request_details(
     pr_id: str,
+    current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Get detailed information about an automated PR."""
-    from app.adapters.database.postgres.models import PullRequestTable
-    
+    """Get detailed information about an automated PR (ownership check applied)."""
+    from app.adapters.database.postgres.models import PullRequestTable, IncidentTable
+
+    user = current_user["user"]
+
     try:
-        pr = db.query(PullRequestTable).filter(PullRequestTable.id == pr_id).first()
+        # SECURITY: Join with incidents to verify ownership
+        pr = db.query(PullRequestTable).join(
+            IncidentTable,
+            PullRequestTable.incident_id == IncidentTable.incident_id
+        ).filter(
+            PullRequestTable.id == pr_id,
+            IncidentTable.user_id == user.user_id
+        ).first()
 
         if not pr:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"PR not found: {pr_id}",
+                detail=f"PR not found or access denied: {pr_id}",
             )
         
         logger.info("pull_request_details_retrieved", pr_id=pr_id)
@@ -345,28 +354,38 @@ async def get_pull_request_details(
 @router.post(
     "/pulls/{pr_id}/update-status",
     summary="Update PR status",
-    description="Update the status of a pull request",
+    description="Update the status of a pull request (ownership check applied)",
 )
 async def update_pr_status(
     pr_id: str,
     new_status: str = Query(..., description="New status (open, merged, closed, etc.)"),
     metadata: Optional[Dict[str, Any]] = None,
+    current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Update the status of an automated PR.
-    
+    Update the status of an automated PR (only for user's own PRs).
+
     Useful for syncing PR status from GitHub.
     """
-    from app.adapters.database.postgres.models import PullRequestTable, PRStatus
-    
+    from app.adapters.database.postgres.models import PullRequestTable, PRStatus, IncidentTable
+
+    user = current_user["user"]
+
     try:
-        pr = db.query(PullRequestTable).filter(PullRequestTable.id == pr_id).first()
+        # SECURITY: Join with incidents to verify ownership
+        pr = db.query(PullRequestTable).join(
+            IncidentTable,
+            PullRequestTable.incident_id == IncidentTable.incident_id
+        ).filter(
+            PullRequestTable.id == pr_id,
+            IncidentTable.user_id == user.user_id
+        ).first()
 
         if not pr:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"PR not found: {pr_id}",
+                detail=f"PR not found or access denied: {pr_id}",
             )
         
         # Validate status
@@ -418,45 +437,51 @@ async def update_pr_status(
             detail=f"Failed to update PR status: {str(e)}",
         )
 
-
-# ============================================================================
-# Statistics Endpoints
-# ============================================================================
-
 @router.get(
     "/stats",
     summary="PR creation statistics",
-    description="Get statistics about automated PR creation",
+    description="Get statistics about automated PR creation for current user",
 )
 async def get_pr_statistics(
+    current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Get statistics about automated PR creation."""
-    from app.adapters.database.postgres.models import PullRequestTable, PRStatus
-    
+    """Get statistics about automated PR creation for current authenticated user only."""
+    from app.adapters.database.postgres.models import PullRequestTable, PRStatus, IncidentTable
+
+    user = current_user["user"]
+
     try:
-        total_prs = db.query(PullRequestTable).count()
-        
+        # SECURITY: Only count PRs for this user's incidents
+        base_query = db.query(PullRequestTable).join(
+            IncidentTable,
+            PullRequestTable.incident_id == IncidentTable.incident_id
+        ).filter(
+            IncidentTable.user_id == user.user_id
+        )
+
+        total_prs = base_query.count()
+
         status_counts = {}
         for pr_status in PRStatus:
-            count = db.query(PullRequestTable).filter(
+            count = base_query.filter(
                 PullRequestTable.status == pr_status
             ).count()
             status_counts[pr_status.value] = count
-        
-        merged_prs = db.query(PullRequestTable).filter(
+
+        merged_prs = base_query.filter(
             PullRequestTable.status == PRStatus.MERGED
         ).count()
-        
-        avg_files_changed = db.query(
+
+        avg_files_changed = base_query.with_entities(
             func.avg(PullRequestTable.files_changed)
         ).scalar() or 0
 
-        total_additions = db.query(
+        total_additions = base_query.with_entities(
             func.sum(PullRequestTable.additions)
         ).scalar() or 0
 
-        total_deletions = db.query(
+        total_deletions = base_query.with_entities(
             func.sum(PullRequestTable.deletions)
         ).scalar() or 0
         
