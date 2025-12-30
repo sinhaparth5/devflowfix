@@ -415,13 +415,28 @@ class PRCreatorService:
         """Apply code changes to files."""
         changed_files = []
 
-        for change in code_changes:
+        print(f"\n🔍 DEBUG: _apply_code_changes called")
+        print(f"   Total code changes to apply: {len(code_changes)}")
+        print(f"   Branch: {branch}")
+
+        if not code_changes:
+            print(f"   ⚠️  WARNING: No code changes provided!")
+            return changed_files
+
+        for idx, change in enumerate(code_changes, 1):
+            print(f"\n   📄 Processing change #{idx}/{len(code_changes)}")
             file_path = change.get("file_path")
             fixed_code = change.get("fixed_code")
             current_code = change.get("current_code")
             line_number = change.get("line_number")
-            
+
+            print(f"      File: {file_path}")
+            print(f"      Has fixed_code: {bool(fixed_code)}")
+            print(f"      Has current_code: {bool(current_code)}")
+            print(f"      Line number: {line_number}")
+
             if not file_path or not fixed_code:
+                print(f"      ❌ SKIPPING: Missing file_path or fixed_code")
                 continue
 
             try:
@@ -539,16 +554,22 @@ class PRCreatorService:
                     updated_content = fixed_code
 
                 # Update the file in the repository
+                commit_message = f"fix: {change.get('explanation', 'Auto-fix code issue')}"
+                print(f"      🔨 Committing change to {file_path}...")
+                print(f"      Commit message: {commit_message}")
+                print(f"      Content length: {len(updated_content)} chars")
+
                 await github_client.create_or_update_file(
                     owner=owner,
                     repo=repo,
                     path=file_path,
-                    message=f"fix: {change.get('explanation', 'Auto-fix code issue')}",
+                    message=commit_message,
                     content=updated_content,
                     branch=branch,
                     sha=sha,
                 )
 
+                print(f"      ✅ Successfully committed {file_path}")
                 changed_files.append(file_path)
 
                 logger.info(
@@ -559,12 +580,16 @@ class PRCreatorService:
                 )
 
             except Exception as e:
+                print(f"      ❌ ERROR applying change to {file_path}: {str(e)}")
                 logger.error(
                     "code_change_failed",
                     file=file_path,
                     error=str(e),
                     exc_info=True,
                 )
+
+        print(f"\n   📊 SUMMARY: Successfully committed {len(changed_files)} file(s)")
+        print(f"   Files changed: {changed_files}")
         return changed_files
     
     async def _apply_config_changes(
