@@ -430,17 +430,32 @@ class PRCreatorService:
             file_path = change.get("file_path")
             fixed_code = change.get("fixed_code")
             current_code = change.get("current_code")
-            line_number = change.get("line_number")
+            line_number_raw = change.get("line_number")
+
+            # Convert line_number to int if it's a string
+            line_number = None
+            if line_number_raw:
+                try:
+                    line_number = int(line_number_raw) if isinstance(line_number_raw, str) else line_number_raw
+                except (ValueError, TypeError):
+                    print(f"      ⚠️  Invalid line_number: {line_number_raw}")
+                    line_number = None
 
             print(f"      File: {file_path}")
             print(f"      Has fixed_code: {bool(fixed_code)}")
+            print(f"      fixed_code value: {repr(fixed_code)}")  # Show actual value
             print(f"      Has current_code: {bool(current_code)}")
-            print(f"      Line number: {line_number}")
+            print(f"      Line number: {line_number} (raw: {line_number_raw})")
 
-            if not file_path or not fixed_code:
-                print(f"      ❌ SKIPPING: Missing file_path or fixed_code")
+            # Check if file_path exists and fixed_code is not None (empty string is valid - means delete)
+            if not file_path or fixed_code is None:
+                print(f"      ❌ SKIPPING: Missing file_path or fixed_code is None")
                 print(f"      Available keys in change: {list(change.keys())}")
                 continue
+
+            # Empty string for fixed_code means "delete this line"
+            if fixed_code == "" and line_number:
+                print(f"      ℹ️  Empty fixed_code detected - will DELETE line {line_number}")
 
             try:
                 # Fetch the current file content from the repository
@@ -521,14 +536,24 @@ class PRCreatorService:
                         # Use line number to apply the fix
                         lines = file_content.split('\\n')
                         if 0 < line_number <= len(lines):
-                            # Replace the line at the specified line number
-                            lines[line_number - 1] = fixed_code if not fixed_code.endswith('\\n') else fixed_code.rstrip('\\n')
-                            updated_content = '\\n'.join(lines)
-                            logger.info(
-                                "code_replaced_at_line",
-                                file=file_path,
-                                line_number=line_number,
-                            )
+                            # Special case: empty fixed_code means DELETE the line
+                            if fixed_code == "":
+                                del lines[line_number - 1]
+                                updated_content = '\\n'.join(lines)
+                                logger.info(
+                                    "line_deleted",
+                                    file=file_path,
+                                    line_number=line_number,
+                                )
+                            else:
+                                # Replace the line at the specified line number
+                                lines[line_number - 1] = fixed_code if not fixed_code.endswith('\\n') else fixed_code.rstrip('\\n')
+                                updated_content = '\\n'.join(lines)
+                                logger.info(
+                                    "code_replaced_at_line",
+                                    file=file_path,
+                                    line_number=line_number,
+                                )
                         else:
                             # Line number out of range, append at the end
                             updated_content = file_content + '\\n' + fixed_code
