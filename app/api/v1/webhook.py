@@ -364,8 +364,8 @@ async def receive_github_webhook(
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
-    # Create application logger
-    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+    # Create application logger WITHOUT incident_id initially (will set later if it's a failure event)
+    app_logger = AppLogger(db, incident_id=None, user_id=user_id)
 
     # Log webhook received
     app_logger.webhook_received(
@@ -374,6 +374,7 @@ async def receive_github_webhook(
             "event_type": x_github_event,
             "delivery_id": x_github_delivery,
             "body_size": len(body) if body else 0,
+            "potential_incident_id": incident_id,  # Track for reference
         }
     )
 
@@ -463,6 +464,9 @@ async def receive_github_webhook(
     if "context" not in normalized_payload:
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
+
+    # Now that we know it's a failure event, set the incident_id on the logger
+    app_logger.incident_id = incident_id
 
     # Log queuing for background processing
     app_logger.info(
@@ -789,11 +793,23 @@ async def process_webhook_async(
     Process webhook event asynchronously.
     """
     try:
+        print(f"\n{'='*80}")
+        print(f"🚀 BACKGROUND PROCESSING STARTED")
+        print(f"{'='*80}")
+        print(f"   Incident ID: {incident_id}")
+        print(f"   Source: {source.value}")
+        print(f"   User ID: {user_id}")
+        print(f"{'='*80}\n")
+
         if source == IncidentSource.GITHUB:
             try:
                 context = payload.get("context", {})
                 repo = context.get("repository", "")
                 run_id = context.get("run_id")
+
+                print(f"📥 Fetching GitHub workflow logs...")
+                print(f"   Repository: {repo}")
+                print(f"   Run ID: {run_id}")
 
                 if repo and run_id and "/" in repo:
                     owner, repo_name = repo.split("/", 1)
@@ -813,12 +829,16 @@ Branch: {context.get('branch', 'unknown')}
 --- EXTRACTED ERRORS ---
 {workflow_logs}"""
 
+                        print(f"✅ Successfully fetched workflow logs ({len(workflow_logs)} chars)")
                         logger.info(
                             "github_logs_added_to_payload",
                             incident_id=incident_id,
                             log_length=len(workflow_logs)
                         )
+                    else:
+                        print(f"⚠️  No workflow logs found")
                 else:
+                    print(f"⚠️  Missing repository or run_id context")
                     logger.warning(
                         "github_logs_missing_context",
                         incident_id=incident_id,
@@ -826,16 +846,27 @@ Branch: {context.get('branch', 'unknown')}
                         has_run_id=bool(run_id),
                     )
             except Exception as e:
+                print(f"❌ Failed to fetch GitHub logs: {str(e)}")
                 logger.warning(
                     "github_logs_fetch_failed",
                     incident_id=incident_id,
                     error=str(e),
                 )
 
+        print(f"\n🔄 Starting event processing pipeline...")
         result = await event_processor.process(
             payload=payload,
             source=source,
         )
+
+        print(f"\n{'='*80}")
+        print(f"✅ WEBHOOK PROCESSING COMPLETE")
+        print(f"{'='*80}")
+        print(f"   Incident ID: {result.incident_id}")
+        print(f"   Success: {result.success}")
+        print(f"   Outcome: {result.outcome.value}")
+        print(f"   Duration: {result.duration_ms}ms")
+        print(f"{'='*80}\n")
 
         logger.info(
             "webhook_processing_complete",
@@ -846,6 +877,13 @@ Branch: {context.get('branch', 'unknown')}
         )
 
     except Exception as e:
+        print(f"\n{'='*80}")
+        print(f"❌ WEBHOOK PROCESSING FAILED")
+        print(f"{'='*80}")
+        print(f"   Incident ID: {incident_id}")
+        print(f"   Error: {str(e)}")
+        print(f"{'='*80}\n")
+
         logger.error(
             "webhook_processing_failed",
             incident_id=incident_id,

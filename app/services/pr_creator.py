@@ -157,11 +157,17 @@ class PRCreatorService:
         start_time = datetime.now(timezone.utc)
 
         try:
+            print(f"\n🌿 Creating fix branch...")
             branch_name = self._generate_branch_name(incident, analysis)
+            print(f"   Branch: {branch_name}")
+            print(f"   Base: {base_branch}")
+
             await self._create_branch(
                 github_client, owner, repo, base_branch, branch_name
             )
+            print(f"✅ Branch created successfully")
 
+            print(f"\n📝 Applying code changes...")
             changed_files = await self._apply_code_changes(
                 github_client=github_client,
                 owner=owner,
@@ -169,7 +175,9 @@ class PRCreatorService:
                 branch=branch_name,
                 code_changes=solution.get("code_changes", []),
             )
+            print(f"✅ Applied {len(changed_files)} code changes")
 
+            print(f"\n⚙️  Applying configuration changes...")
             config_files = await self._apply_config_changes(
                 github_client=github_client,
                 owner=owner,
@@ -177,7 +185,9 @@ class PRCreatorService:
                 branch=branch_name,
                 config_changes=solution.get("configuration_changes", []),
             )
+            print(f"✅ Applied {len(config_files)} config changes")
 
+            print(f"\n📄 Generating PR title and description...")
             pr_title = self._generate_pr_title(analysis)
             pr_body = self._generate_pr_body(
                 incident=incident,
@@ -185,6 +195,7 @@ class PRCreatorService:
                 solution=solution,
                 changed_files=changed_files + config_files,
             )
+            print(f"✅ Generated PR content (title: {len(pr_title)} chars, body: {len(pr_body)} chars)")
 
             logger.info(
                 "pr_creation_payload",
@@ -194,6 +205,7 @@ class PRCreatorService:
                 base=base_branch,
             )
 
+            print(f"\n🚀 Creating pull request in {owner}/{repo}...")
             pr_result = await github_client.create_pull_request(
                 owner=owner,
                 repo=repo,
@@ -202,6 +214,9 @@ class PRCreatorService:
                 head=branch_name,
                 base=base_branch,
             )
+            print(f"✅ Pull request created:")
+            print(f"   PR #{pr_result['number']}")
+            print(f"   URL: {pr_result['html_url']}")
 
             # Store PR metadata in database
             db_gen = None
