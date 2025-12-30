@@ -365,7 +365,7 @@ async def receive_github_webhook(
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
     # Create application logger WITHOUT incident_id initially (will set later if it's a failure event)
-    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+    app_logger = AppLogger(db, incident_id=None, user_id=user_id)
 
     # Log webhook received
     app_logger.webhook_received(
@@ -374,6 +374,7 @@ async def receive_github_webhook(
             "event_type": x_github_event,
             "delivery_id": x_github_delivery,
             "body_size": len(body) if body else 0,
+            "potential_incident_id": incident_id,  # Track for reference
         }
     )
 
@@ -464,6 +465,9 @@ async def receive_github_webhook(
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
 
+    # Now that we know it's a failure event, set the incident_id on the logger
+    app_logger.incident_id = incident_id
+
     # Log queuing for background processing
     app_logger.info(
         "Webhook queued for background processing",
@@ -476,7 +480,7 @@ async def receive_github_webhook(
     )
 
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.GITHUB,
@@ -631,7 +635,7 @@ async def receive_argocd_webhook(
     normalized_payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.ARGOCD,
@@ -692,7 +696,7 @@ async def receive_kubernetes_webhook(
     normalized_payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.KUBERNETES,
@@ -763,7 +767,7 @@ async def receive_generic_webhook(
     payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         payload,
         source,
@@ -853,6 +857,49 @@ Branch: {context.get('branch', 'unknown')}
             error=str(e),
             exc_info=True,
         )
+
+
+def process_webhook_sync(
+    event_processor: EventProcessor,
+    payload: Dict[str, Any],
+    source: IncidentSource,
+    incident_id: str,
+    user_id: str,
+) -> None:
+    """
+    Synchronous wrapper for process_webhook_async to work with BackgroundTasks.
+    """
+    import asyncio
+
+    try:
+        # Create a new event loop for this background task
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Run the async function
+        loop.run_until_complete(
+            process_webhook_async(
+                event_processor=event_processor,
+                payload=payload,
+                source=source,
+                incident_id=incident_id,
+                user_id=user_id,
+            )
+        )
+    except Exception as e:
+        logger.error(
+            "webhook_sync_wrapper_failed",
+            incident_id=incident_id,
+            user_id=user_id,
+            error=str(e),
+            exc_info=True,
+        )
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
+
 
 @router.post(
     "/webhook/secret/generate/me",
