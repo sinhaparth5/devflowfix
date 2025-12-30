@@ -364,8 +364,8 @@ async def receive_github_webhook(
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
-    # Create application logger
-    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+    # Create application logger WITHOUT incident_id initially (will set later if it's a failure event)
+    app_logger = AppLogger(db, incident_id=None, user_id=user_id)
 
     # Log webhook received
     app_logger.webhook_received(
@@ -374,6 +374,7 @@ async def receive_github_webhook(
             "event_type": x_github_event,
             "delivery_id": x_github_delivery,
             "body_size": len(body) if body else 0,
+            "potential_incident_id": incident_id,  # Track for reference
         }
     )
 
@@ -463,6 +464,9 @@ async def receive_github_webhook(
     if "context" not in normalized_payload:
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
+
+    # Now that we know it's a failure event, set the incident_id on the logger
+    app_logger.incident_id = incident_id
 
     # Log queuing for background processing
     app_logger.info(
