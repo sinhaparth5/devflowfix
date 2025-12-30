@@ -425,6 +425,8 @@ class PRCreatorService:
 
         for idx, change in enumerate(code_changes, 1):
             print(f"\n   📄 Processing change #{idx}/{len(code_changes)}")
+            print(f"      Raw change data: {change}")  # Show full structure
+
             file_path = change.get("file_path")
             fixed_code = change.get("fixed_code")
             current_code = change.get("current_code")
@@ -437,6 +439,7 @@ class PRCreatorService:
 
             if not file_path or not fixed_code:
                 print(f"      ❌ SKIPPING: Missing file_path or fixed_code")
+                print(f"      Available keys in change: {list(change.keys())}")
                 continue
 
             try:
