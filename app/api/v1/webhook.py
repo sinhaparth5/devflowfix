@@ -464,9 +464,6 @@ async def receive_github_webhook(
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
 
-    # Now that we know it's a failure event, set the incident_id on the logger
-    app_logger.incident_id = incident_id
-
     # Log queuing for background processing
     app_logger.info(
         "Webhook queued for background processing",
