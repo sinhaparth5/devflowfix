@@ -102,45 +102,33 @@ class EventProcessor:
         source: IncidentSource,
         context: Optional[ExecutionContext] = None,
     ) -> ProcessingResult:
-
+        
         start_time = datetime.now(timezone.utc)
         incident = None
-
+        
         try:
-            print(f"\n📝 Creating incident record...")
             incident = await self._create_incident(payload, source)
-            print(f"✅ Incident created: {incident.incident_id}")
-
+            
             logger.info(
                 "processing_started",
                 incident_id=incident.incident_id,
                 source=source.value,
             )
-
+            
             if self.enable_notifications and self.notification_service:
                 await self._notify(
                     NotificationType.INCIDENT_DETECTED,
                     incident,
                 )
-
+            
             context = context or self._create_context(incident)
-
-            print(f"\n🔢 Generating embeddings for vector search...")
+            
             await self._generate_and_store_embedding(incident)
-            print(f"✅ Embeddings generated")
-
-            print(f"\n🔍 Searching for similar incidents...")
+            
             similar_incidents = await self._retrieve_similar(incident)
-            print(f"✅ Found {len(similar_incidents)} similar incidents")
-
-            print(f"\n🤖 Starting LLM analysis...")
+            
             analysis = await self._analyze(incident, similar_incidents)
-            print(f"✅ Analysis complete:")
-            print(f"   - Category: {analysis.category.value}")
-            print(f"   - Confidence: {analysis.confidence:.2%}")
-            print(f"   - Fixability: {analysis.fixability.value}")
-            print(f"   - Root Cause: {analysis.root_cause[:100]}..." if len(analysis.root_cause) > 100 else f"   - Root Cause: {analysis.root_cause}")
-
+            
             await self._update_incident_analysis(incident, analysis)
             
             if self.enable_notifications and self.notification_service:
@@ -149,52 +137,28 @@ class EventProcessor:
                     incident,
                     similar_incidents=similar_incidents,
                 )
-
+            
             # Generate and log solutions
-            print(f"\n💡 Generating solutions using LLM...")
             await self._generate_and_log_solutions(incident, analysis)
-
-            print(f"\n🎯 Making remediation decision...")
+            
             decision = await self._decide(analysis, incident, context, similar_incidents)
-            print(f"✅ Decision made:")
-            print(f"   - Auto Fix: {decision.should_auto_fix}")
-            print(f"   - Confidence: {decision.confidence:.2%}")
-            print(f"   - Strategy: {decision.strategy_name}")
-            print(f"   - Requires Approval: {decision.requires_approval}")
-
+            
             if not decision.should_auto_fix:
-                print(f"\n⏸️  Auto-fix not recommended - {decision.reason}")
                 return await self._handle_no_auto_fix(
                     incident, decision, start_time
                 )
-
+            
             if decision.requires_approval:
-                print(f"\n⏸️  Manual approval required - {decision.reason}")
                 return await self._handle_approval_required(
                     incident, decision, start_time
                 )
-
-            print(f"\n🔧 Executing remediation...")
+            
             remediation_result = await self._remediate(incident, analysis, context)
-            print(f"✅ Remediation complete:")
-            print(f"   - Success: {remediation_result.success}")
-            print(f"   - Message: {remediation_result.message}")
-            print(f"   - Duration: {remediation_result.duration_seconds}s")
-
+            
             await self._finalize(incident, remediation_result)
-
+            
             duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-
-            print(f"\n{'='*80}")
-            print(f"🎉 INCIDENT PROCESSING COMPLETE")
-            print(f"{'='*80}")
-            print(f"   Incident ID: {incident.incident_id}")
-            print(f"   Outcome: {remediation_result.outcome.value}")
-            print(f"   Total Duration: {duration_ms}ms ({duration_ms/1000:.2f}s)")
-            print(f"   Success: {remediation_result.success}")
-            print(f"   Strategy Used: {decision.strategy_name}")
-            print(f"{'='*80}\n")
-
+            
             return ProcessingResult(
                 incident_id=incident.incident_id,
                 success=remediation_result.success,

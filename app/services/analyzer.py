@@ -119,26 +119,21 @@ class AnalyzerService:
             return self._create_result_from_incident(incident)
         
         try:
-            print(f"   📊 Analyzing error logs and context...")
             embedding = await self._generate_embedding(incident)
-
+            
             similar_incidents = await self._retrieve_similar_incidents(
                 embedding=embedding,
                 incident=incident,
             )
-            print(f"   🔎 Retrieved {len(similar_incidents)} similar incidents for context")
-
+            
             prompt = self._build_analysis_prompt(
                 incident=incident,
                 similar_incidents=similar_incidents,
             )
-            print(f"   🤖 Calling LLM ({self.llm_model}) for analysis...")
-
+            
             llm_response = await self._call_llm(prompt)
-            print(f"   ✅ LLM response received")
-
+            
             analysis = self._parse_llm_response(llm_response)
-            print(f"   📝 Parsed analysis results")
             
             final_confidence = self._calculate_confidence(
                 llm_confidence=analysis.get("confidence", 0.5),
