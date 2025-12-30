@@ -153,7 +153,9 @@ class PRCreatorService:
                 }
             )
 
-        creation_log_id = f"log_{uuid4()}"
+        # Generate ID with prefix + UUID hex (no hyphens) to fit VARCHAR(36)
+        # log_ (4 chars) + 32 hex chars = 36 total
+        creation_log_id = f"log_{uuid4().hex}"
         start_time = datetime.now(timezone.utc)
 
         try:
@@ -212,7 +214,8 @@ class PRCreatorService:
                 db = next(db_gen)
 
             try:
-                pr_id = f"pr_{uuid4()}"
+                # pr_ (3 chars) + 32 hex chars = 35 total (fits VARCHAR(36))
+                pr_id = f"pr_{uuid4().hex}"
 
                 pr_record = PullRequestTable(
                     id=pr_id,
