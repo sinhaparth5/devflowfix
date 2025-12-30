@@ -480,7 +480,7 @@ async def receive_github_webhook(
     )
 
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.GITHUB,
@@ -635,7 +635,7 @@ async def receive_argocd_webhook(
     normalized_payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.ARGOCD,
@@ -696,7 +696,7 @@ async def receive_kubernetes_webhook(
     normalized_payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         normalized_payload,
         IncidentSource.KUBERNETES,
@@ -767,7 +767,7 @@ async def receive_generic_webhook(
     payload["context"]["user_id"] = user_id
     
     background_tasks.add_task(
-        process_webhook_async,
+        process_webhook_sync,
         event_processor,
         payload,
         source,
@@ -798,17 +798,17 @@ async def process_webhook_async(
                 context = payload.get("context", {})
                 repo = context.get("repository", "")
                 run_id = context.get("run_id")
-                
+
                 if repo and run_id and "/" in repo:
                     owner, repo_name = repo.split("/", 1)
                     log_extractor = GitHubLogExtractor()
-                    
+
                     workflow_logs = await log_extractor.fetch_and_parse_logs(
                         owner=owner,
                         repo=repo_name,
                         run_id=run_id
                     )
-                    
+
                     if workflow_logs:
                         payload["error_log"] = f"""GitHub Workflow Failed
 Repository: {context.get('repository', 'unknown')}
@@ -816,7 +816,7 @@ Branch: {context.get('branch', 'unknown')}
 
 --- EXTRACTED ERRORS ---
 {workflow_logs}"""
-                        
+
                         logger.info(
                             "github_logs_added_to_payload",
                             incident_id=incident_id,
@@ -835,12 +835,12 @@ Branch: {context.get('branch', 'unknown')}
                     incident_id=incident_id,
                     error=str(e),
                 )
-        
+
         result = await event_processor.process(
             payload=payload,
             source=source,
         )
-        
+
         logger.info(
             "webhook_processing_complete",
             incident_id=result.incident_id,
@@ -848,7 +848,7 @@ Branch: {context.get('branch', 'unknown')}
             outcome=result.outcome.value,
             user_id=user_id,
         )
-        
+
     except Exception as e:
         logger.error(
             "webhook_processing_failed",
@@ -857,6 +857,48 @@ Branch: {context.get('branch', 'unknown')}
             error=str(e),
             exc_info=True,
         )
+
+
+def process_webhook_sync(
+    event_processor: EventProcessor,
+    payload: Dict[str, Any],
+    source: IncidentSource,
+    incident_id: str,
+    user_id: str,
+) -> None:
+    """
+    Synchronous wrapper for process_webhook_async to work with BackgroundTasks.
+    """
+    import asyncio
+
+    try:
+        # Create a new event loop for this background task
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Run the async function
+        loop.run_until_complete(
+            process_webhook_async(
+                event_processor=event_processor,
+                payload=payload,
+                source=source,
+                incident_id=incident_id,
+                user_id=user_id,
+            )
+        )
+    except Exception as e:
+        logger.error(
+            "webhook_sync_wrapper_failed",
+            incident_id=incident_id,
+            user_id=user_id,
+            error=str(e),
+            exc_info=True,
+        )
+    finally:
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 @router.post(
     "/webhook/secret/generate/me",
