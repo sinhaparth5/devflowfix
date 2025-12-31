@@ -334,17 +334,23 @@ async def root():
             "redoc": "/redoc" if not settings.is_production else None,
             "health": "/health",
             "ready": "/ready",
-            "api": "/api/v1",
+            "api_v1": "/api/v1",
+            "api_v2": "/api/v2",
         },
         "endpoints": {
-            "auth": "/api/v1/auth",
-            "webhooks": "/api/v1/webhook",
-            "analytics": "/api/v1/analytics",
-            "incidents": "/api/v1/incidents",
-            "user_details": "/api/v1/user-details",
-            "logs": "/api/v1/logs",
-            "jobs": "/api/v1/jobs",
-            "pr_management": "/api/v1/pr-management",
+            "v1": {
+                "auth": "/api/v1/auth",
+                "webhooks": "/api/v1/webhook",
+                "analytics": "/api/v1/analytics",
+                "incidents": "/api/v1/incidents",
+                "user_details": "/api/v1/user-details",
+                "logs": "/api/v1/logs",
+                "jobs": "/api/v1/jobs",
+                "pr_management": "/api/v1/pr-management",
+            },
+            "v2": {
+                "oauth": "/api/v2/oauth",
+            },
         },
     }
 
@@ -357,6 +363,7 @@ from app.api.v1.pr_management import router as pr_management_router
 from app.api.v1.user_details import router as user_details_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.jobs import router as jobs_router
+from app.api.v2 import router as v2_router
 
 app.include_router(
     auth_router,
@@ -406,6 +413,11 @@ app.include_router(
     tags=["Background Jobs"],
 )
 
+app.include_router(
+    v2_router,
+    prefix="/api",
+)
+
 logger.info(
     "routers_registered",
     routers=[
@@ -417,6 +429,7 @@ logger.info(
         "/api/v1/user-details",
         "/api/v1/logs",
         "/api/v1/jobs",
+        "/api/v2/oauth",
     ],
     webhook_endpoints=[
         "/api/v1/webhook/github/{user_id}",

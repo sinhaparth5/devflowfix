@@ -381,6 +381,46 @@ class Settings(BaseSettings):
         description="GitHub OAuth App redirect URI"
     )
 
+    github_oauth_scopes: str = Field(
+        default="repo,read:user,admin:repo_hook",
+        description="GitHub OAuth scopes (comma-separated)"
+    )
+
+    gitlab_oauth_client_id: Optional[str] = Field(
+        default=None,
+        description="GitLab OAuth App application ID"
+    )
+
+    gitlab_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        description="GitLab OAuth App secret"
+    )
+
+    gitlab_oauth_redirect_uri: Optional[str] = Field(
+        default=None,
+        description="GitLab OAuth App redirect URI"
+    )
+
+    gitlab_oauth_scopes: str = Field(
+        default="api,read_user,read_repository,write_repository",
+        description="GitLab OAuth scopes (comma-separated)"
+    )
+
+    gitlab_instance_url: str = Field(
+        default="https://gitlab.com",
+        description="GitLab instance URL (default: gitlab.com, can be self-hosted)"
+    )
+
+    oauth_token_encryption_key: Optional[str] = Field(
+        default=None,
+        description="Fernet encryption key for OAuth tokens (base64-encoded 32-byte key)"
+    )
+
+    webhook_base_url: Optional[str] = Field(
+        default=None,
+        description="Base URL for webhooks (e.g., https://api.devflowfix.com)"
+    )
+
     # Slack settings
     slack_token: str = Field(
         default="",
