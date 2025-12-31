@@ -19,7 +19,10 @@ from app.dependencies import get_db, get_event_processor, get_service_container
 from app.adapters.external.github.client import GitHubClient
 from app.services.github_log_parser import GitHubLogExtractor
 from app.utils.app_logger import AppLogger
-from app.adapters.database.postgres.models import LogCategory
+from app.adapters.database.postgres.models import LogCategory, RepositoryConnectionTable
+from app.services.oauth.token_manager import get_token_manager
+from app.services.workflow.workflow_tracker import WorkflowTracker
+from app.services.workflow.gitlab_pipeline_tracker import GitLabPipelineTracker
 
 try:
     from app.api.v1.auth import get_current_active_user
@@ -78,6 +81,215 @@ def verify_github_signature(body: bytes, signature_header: str, secret: str) -> 
     )
     
     return is_valid
+
+
+async def process_oauth_connected_workflow_event(
+    db: Session,
+    user_id: str,
+    payload: Dict[str, Any],
+    event_type: str,
+) -> bool:
+    """
+    Process workflow_run event for OAuth-connected repositories.
+
+    Returns:
+        True if event was processed for an OAuth-connected repo, False otherwise
+    """
+    # Only process workflow_run events
+    if event_type != "workflow_run":
+        return False
+
+    # Get repository full name from payload
+    repository_data = payload.get("repository", {})
+    repository_full_name = repository_data.get("full_name")
+
+    if not repository_full_name:
+        return False
+
+    # Check if this repository is connected via OAuth
+    repo_connection = (
+        db.query(RepositoryConnectionTable)
+        .filter(
+            RepositoryConnectionTable.user_id == user_id,
+            RepositoryConnectionTable.repository_full_name == repository_full_name,
+            RepositoryConnectionTable.is_enabled == True,
+        )
+        .first()
+    )
+
+    if not repo_connection:
+        # Not an OAuth-connected repository, use legacy flow
+        return False
+
+    logger.info(
+        "processing_oauth_workflow_event",
+        user_id=user_id,
+        repository=repository_full_name,
+        connection_id=repo_connection.id,
+        event_type=event_type,
+    )
+
+    # Update last_event_at
+    repo_connection.last_event_at = datetime.now(timezone.utc)
+    db.flush()
+
+    # Process workflow run event
+    token_manager = get_token_manager(settings.oauth_token_encryption_key)
+    workflow_tracker = WorkflowTracker(token_manager=token_manager)
+
+    try:
+        workflow_run = await workflow_tracker.process_workflow_run_event(
+            db=db,
+            event_payload=payload,
+            repository_connection=repo_connection,
+        )
+
+        if workflow_run:
+            db.commit()
+            logger.info(
+                "oauth_workflow_event_processed",
+                user_id=user_id,
+                repository=repository_full_name,
+                workflow_run_id=workflow_run.id,
+                github_run_id=workflow_run.run_id,
+                conclusion=workflow_run.conclusion,
+            )
+            return True
+        else:
+            logger.warning(
+                "oauth_workflow_event_not_processed",
+                user_id=user_id,
+                repository=repository_full_name,
+            )
+            return False
+
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "oauth_workflow_event_processing_failed",
+            user_id=user_id,
+            repository=repository_full_name,
+            error=str(e),
+            exc_info=True,
+        )
+        return False
+
+
+def verify_gitlab_token(token_header: str, expected_token: str) -> bool:
+    """
+    Verify GitLab webhook token.
+
+    GitLab uses a simple token-based authentication for webhooks.
+
+    Args:
+        token_header: Token from X-Gitlab-Token header
+        expected_token: Expected token configured for the webhook
+
+    Returns:
+        True if tokens match, False otherwise
+    """
+    if not token_header or not expected_token:
+        logger.warning(
+            "gitlab_token_verification_missing_data",
+            has_token=bool(token_header),
+            has_expected=bool(expected_token),
+        )
+        return False
+
+    is_valid = hmac.compare_digest(token_header, expected_token)
+
+    logger.debug(
+        "gitlab_token_verification_result",
+        token_match=is_valid,
+    )
+
+    return is_valid
+
+
+async def process_oauth_connected_pipeline_event(
+    db: Session,
+    user_id: str,
+    payload: Dict[str, Any],
+) -> bool:
+    """
+    Process GitLab pipeline event for OAuth-connected repositories.
+
+    Returns:
+        True if event was processed for an OAuth-connected repo, False otherwise
+    """
+    # Get project path_with_namespace from payload
+    project_data = payload.get("project", {})
+    repository_full_name = project_data.get("path_with_namespace")
+
+    if not repository_full_name:
+        return False
+
+    # Check if this repository is connected via OAuth
+    repo_connection = (
+        db.query(RepositoryConnectionTable)
+        .filter(
+            RepositoryConnectionTable.user_id == user_id,
+            RepositoryConnectionTable.repository_full_name == repository_full_name,
+            RepositoryConnectionTable.provider == "gitlab",
+            RepositoryConnectionTable.is_enabled == True,
+        )
+        .first()
+    )
+
+    if not repo_connection:
+        # Not an OAuth-connected repository
+        return False
+
+    logger.info(
+        "processing_oauth_gitlab_pipeline_event",
+        user_id=user_id,
+        repository=repository_full_name,
+        connection_id=repo_connection.id,
+    )
+
+    # Update last_event_at
+    repo_connection.last_event_at = datetime.now(timezone.utc)
+    db.flush()
+
+    # Process pipeline event
+    pipeline_tracker = GitLabPipelineTracker()
+
+    try:
+        pipeline_run = await pipeline_tracker.process_pipeline_event(
+            db=db,
+            event_payload=payload,
+            repository_connection=repo_connection,
+        )
+
+        if pipeline_run:
+            db.commit()
+            logger.info(
+                "oauth_gitlab_pipeline_event_processed",
+                user_id=user_id,
+                repository=repository_full_name,
+                pipeline_run_id=pipeline_run.id,
+                gitlab_pipeline_id=pipeline_run.run_id,
+                conclusion=pipeline_run.conclusion,
+            )
+            return True
+        else:
+            logger.warning(
+                "oauth_gitlab_pipeline_event_not_processed",
+                user_id=user_id,
+                repository=repository_full_name,
+            )
+            return False
+
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "oauth_gitlab_pipeline_event_processing_failed",
+            user_id=user_id,
+            repository=repository_full_name,
+            error=str(e),
+            exc_info=True,
+        )
+        return False
 
 
 async def verify_github_webhook_signature(
@@ -421,6 +633,23 @@ async def receive_github_webhook(
             }
         )
 
+        # Check if this is an OAuth-connected repository and process accordingly
+        oauth_processed = await process_oauth_connected_workflow_event(
+            db=db,
+            user_id=user_id,
+            payload=payload,
+            event_type=x_github_event,
+        )
+
+        if oauth_processed:
+            # OAuth workflow processing completed
+            return WebhookResponse(
+                incident_id=incident_id,
+                acknowledged=True,
+                queued=False,
+                message=f"OAuth workflow event processed successfully",
+            )
+
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         app_logger.error(
             f"Failed to parse webhook JSON: {str(e)}",
@@ -705,6 +934,96 @@ async def receive_kubernetes_webhook(
         acknowledged=True,
         queued=True,
         message=f"Kubernetes failure detected ({reason}), processing started",
+    )
+
+
+@router.post(
+    "/webhook/gitlab/{user_id}",
+    response_model=WebhookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="GitLab webhook endpoint",
+)
+async def receive_gitlab_webhook(
+    user_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_gitlab_event: Optional[str] = Header(None, alias="X-Gitlab-Event"),
+    x_gitlab_token: Optional[str] = Header(None, alias="X-Gitlab-Token"),
+    db: Session = Depends(get_db),
+    event_processor: EventProcessor = Depends(get_event_processor),
+) -> WebhookResponse:
+    """
+    Receive and process GitLab webhook events with path-based authentication.
+
+    GitLab Webhook Events:
+    - Pipeline Hook: Triggered on pipeline status change
+    - Push Hook: Code pushed to repository
+    - Merge Request Hook: MR created/updated
+    - Job Hook: CI job status change
+    """
+    incident_id = f"gl_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+
+    body = await request.body()
+
+    logger.info(
+        "gitlab_webhook_received",
+        incident_id=incident_id,
+        event_type=x_gitlab_event,
+        user_id=user_id,
+        body_length=len(body),
+    )
+
+    # Parse payload
+    try:
+        import json
+        payload = json.loads(body.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(
+            "gitlab_webhook_invalid_json",
+            user_id=user_id,
+            event_type=x_gitlab_event,
+            body_length=len(body),
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid JSON payload: {e}",
+        )
+
+    # Check if this is a pipeline event
+    object_kind = payload.get("object_kind")
+
+    if object_kind == "pipeline":
+        # Process OAuth-connected pipeline event
+        oauth_processed = await process_oauth_connected_pipeline_event(
+            db=db,
+            user_id=user_id,
+            payload=payload,
+        )
+
+        if oauth_processed:
+            # OAuth pipeline processing completed
+            return WebhookResponse(
+                incident_id=incident_id,
+                acknowledged=True,
+                queued=False,
+                message=f"OAuth GitLab pipeline event processed successfully",
+            )
+
+    # If not processed via OAuth, log and acknowledge
+    logger.info(
+        "gitlab_webhook_acknowledged",
+        incident_id=incident_id,
+        event_type=x_gitlab_event,
+        object_kind=object_kind,
+        user_id=user_id,
+    )
+
+    return WebhookResponse(
+        incident_id=incident_id,
+        acknowledged=True,
+        queued=False,
+        message=f"GitLab event acknowledged",
     )
 
 
