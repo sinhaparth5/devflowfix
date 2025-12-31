@@ -4,7 +4,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column, JSON, Relationship
-from sqlalchemy import Text, Index, desc, ForeignKey
+from sqlalchemy import Text, Index, desc, ForeignKey, ARRAY, String
 from pgvector.sqlalchemy import Vector
 import enum
 
@@ -763,4 +763,173 @@ class BackgroundJobTable(SQLModel, table=True):
         Index('idx_jobs_user_created', 'user_id', desc('created_at')),
         Index('idx_jobs_status_created', 'status', desc('created_at')),
         Index('idx_jobs_type_status', 'job_type', 'status'),
+    )
+
+
+# ============================================================================
+# OAuth & Repository Connection Tables (V2 API)
+# ============================================================================
+
+class OAuthConnectionTable(SQLModel, table=True):
+    """
+    OAuth Connection Table
+
+    Stores OAuth connections for GitHub, GitLab, etc.
+    Tokens are encrypted at rest for security.
+    """
+    __tablename__ = "oauth_connections"
+
+    # Primary Key - oac_ prefix + 32 hex chars = 36 total
+    id: str = Field(primary_key=True, max_length=36)
+
+    # Foreign Key to User
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
+
+    # Provider Information
+    provider: str = Field(max_length=20, index=True)  # 'github' or 'gitlab'
+    provider_user_id: str = Field(max_length=100, index=True)
+    provider_username: str = Field(max_length=100)
+
+    # OAuth Tokens (encrypted)
+    access_token: str = Field(sa_column=Column(Text))  # Encrypted OAuth token
+    refresh_token: Optional[str] = Field(default=None, sa_column=Column(Text))
+    token_expires_at: Optional[datetime] = Field(default=None)
+
+    # Scopes
+    scopes: list[str] = Field(default_factory=list, sa_column=Column(ARRAY(String)))
+
+    # Status
+    is_active: bool = Field(default=True, index=True)
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_used_at: Optional[datetime] = Field(default=None)
+
+    __table_args__ = (
+        Index('idx_oauth_user_provider', 'user_id', 'provider', unique=True),
+        Index('idx_oauth_provider_user', 'provider', 'provider_user_id'),
+    )
+
+
+class RepositoryConnectionTable(SQLModel, table=True):
+    """
+    Repository Connection Table
+
+    Tracks which repositories are connected and monitored.
+    Links to OAuth connections for API access.
+    """
+    __tablename__ = "repository_connections"
+
+    # Primary Key - rpc_ prefix + 32 hex chars = 36 total
+    id: str = Field(primary_key=True, max_length=36)
+
+    # Foreign Keys
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
+    oauth_connection_id: str = Field(
+        foreign_key="oauth_connections.id",
+        index=True,
+        max_length=36
+    )
+
+    # Repository Information
+    provider: str = Field(max_length=20, index=True)  # 'github' or 'gitlab'
+    repository_id: str = Field(max_length=100)  # Provider's repo ID
+    repository_full_name: str = Field(max_length=255, index=True)  # owner/repo
+    repository_name: str = Field(max_length=255)
+    owner_name: str = Field(max_length=255)
+    is_private: bool = Field(default=False)
+
+    # Webhook Information
+    webhook_id: Optional[str] = Field(default=None, max_length=100)
+    webhook_url: Optional[str] = Field(default=None, max_length=500)
+    webhook_secret: Optional[str] = Field(default=None, max_length=255)
+
+    # Configuration
+    is_enabled: bool = Field(default=True, index=True)
+    auto_pr_enabled: bool = Field(default=True)
+    auto_fix_enabled: bool = Field(default=True)
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_event_at: Optional[datetime] = Field(default=None)
+
+    # Metadata
+    repository_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+    __table_args__ = (
+        Index('idx_repo_user_full_name', 'user_id', 'repository_full_name', unique=True),
+        Index('idx_repo_oauth_enabled', 'oauth_connection_id', 'is_enabled'),
+    )
+
+
+class WorkflowRunTable(SQLModel, table=True):
+    """
+    Workflow Run Tracking Table
+
+    Tracks GitHub/GitLab workflow runs associated with incidents.
+    """
+    __tablename__ = "workflow_runs"
+
+    # Primary Key - wfr_ prefix + 32 hex chars = 36 total
+    id: str = Field(primary_key=True, max_length=36)
+
+    # Foreign Keys
+    incident_id: Optional[str] = Field(
+        default=None,
+        foreign_key="incidents.incident_id",
+        index=True,
+        max_length=50
+    )
+    repository_connection_id: str = Field(
+        foreign_key="repository_connections.id",
+        index=True,
+        max_length=36
+    )
+
+    # Workflow Run Information
+    provider: str = Field(default="github", max_length=20)
+    run_id: str = Field(max_length=100, index=True)
+    workflow_name: str = Field(max_length=255)
+    workflow_id: Optional[str] = Field(default=None, max_length=100)
+    workflow_path: Optional[str] = Field(default=None, max_length=512)
+
+    # Status
+    status: str = Field(max_length=50)  # queued, in_progress, completed
+    conclusion: Optional[str] = Field(default=None, max_length=50)  # success, failure, cancelled
+
+    # Run Metadata
+    run_number: Optional[int] = Field(default=None)
+    run_attempt: Optional[int] = Field(default=None)
+    branch: Optional[str] = Field(default=None, max_length=255)  # head_branch alias
+    head_branch: Optional[str] = Field(default=None, max_length=255)
+    commit_sha: Optional[str] = Field(default=None, max_length=40)  # head_sha alias
+    head_sha: Optional[str] = Field(default=None, max_length=40)
+    commit_message: Optional[str] = Field(default=None, max_length=1000)
+    author: Optional[str] = Field(default=None, max_length=255)
+    run_url: Optional[str] = Field(default=None, max_length=500)
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Additional Data
+    event_payload: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    run_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+    __table_args__ = (
+        Index('idx_wfrun_repo_run_id', 'repository_connection_id', 'run_id', unique=True),
+        Index('idx_wfrun_incident', 'incident_id'),
+        Index('idx_wfrun_status', 'status', 'conclusion'),
     )
