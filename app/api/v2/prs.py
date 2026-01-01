@@ -24,7 +24,8 @@ from app.core.schemas.pr import (
     PRMergeRequest,
     PRCommentRequest,
 )
-from app.dependencies import get_db, get_current_active_user
+from app.dependencies import get_db
+from app.api.v1.auth import get_current_active_user
 from app.services.oauth.token_manager import get_token_manager
 from app.services.pr.pr_creator import PRCreator
 from app.adapters.database.postgres.models import (

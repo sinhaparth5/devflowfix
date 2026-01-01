@@ -19,7 +19,8 @@ from app.core.schemas.workflow import (
     WorkflowRunStatsResponse,
     WorkflowRetryRequest,
 )
-from app.dependencies import get_db, get_current_active_user
+from app.dependencies import get_db
+from app.api.v1.auth import get_current_active_user
 from app.services.oauth.token_manager import get_token_manager
 from app.services.workflow.workflow_tracker import WorkflowTracker
 from app.adapters.database.postgres.models import RepositoryConnectionTable

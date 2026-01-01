@@ -25,7 +25,8 @@ from app.core.schemas.repository import (
     WebhookSetupResponse,
     RepositoryStatsResponse,
 )
-from app.dependencies import get_db, get_current_active_user
+from app.dependencies import get_db
+from app.api.v1.auth import get_current_active_user
 from app.services.oauth.github_oauth import GitHubOAuthProvider
 from app.services.oauth.gitlab_oauth import GitLabOAuthProvider
 from app.services.oauth.token_manager import get_token_manager
