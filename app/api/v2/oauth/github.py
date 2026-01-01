@@ -7,6 +7,7 @@ GitHub OAuth API Endpoints
 Handles GitHub OAuth 2.0 authorization flow.
 """
 
+import json
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -94,11 +95,15 @@ async def authorize_github(
         # Generate CSRF state
         state = provider.generate_state()
 
-        # Store state in session (you'll need to implement session management)
-        # For now, we'll return it and expect frontend to pass it back
+        # Store state and user_id together in cookie for callback
+        # Callback endpoint doesn't have JWT auth, so we need user_id in the cookie
+        cookie_data = json.dumps({
+            "state": state,
+            "user_id": current_user_data['user'].user_id
+        })
         response.set_cookie(
-            key=f"oauth_state_{current_user_data['user'].user_id}",
-            value=state,
+            key="oauth_state_data",
+            value=cookie_data,
             httponly=True,
             secure=True,
             samesite="lax",
@@ -144,7 +149,6 @@ async def github_callback(
     code: str = Query(..., description="Authorization code from GitHub"),
     state: str = Query(..., description="CSRF protection state"),
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
 ) -> RedirectResponse:
     """
     Handle GitHub OAuth callback.
@@ -162,29 +166,48 @@ async def github_callback(
 
     **Returns:**
     - Redirect to frontend with success status
+
+    **Note:**
+    This endpoint does NOT require authentication because it's called by GitHub
+    during the OAuth redirect. User identity is retrieved from the OAuth state cookie.
     """
     try:
-        user = current_user_data["user"]
         provider = get_github_oauth_provider()
 
-        # Get stored state from cookie
-        stored_state = request.cookies.get(f"oauth_state_{user.user_id}")
+        # Get stored state and user_id from cookie
+        cookie_data_str = request.cookies.get("oauth_state_data")
 
-        if not stored_state:
-            logger.error(
-                "github_oauth_state_missing",
-                user_id=user.user_id,
-            )
+        if not cookie_data_str:
+            logger.error("github_oauth_state_missing")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="OAuth state not found. Please restart the authorization flow."
+            )
+
+        # Parse cookie data
+        try:
+            cookie_data = json.loads(cookie_data_str)
+            stored_state = cookie_data.get("state")
+            user_id = cookie_data.get("user_id")
+        except (json.JSONDecodeError, AttributeError):
+            logger.error("github_oauth_state_invalid_format")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OAuth state format. Please restart the authorization flow."
+            )
+
+        if not stored_state or not user_id:
+            logger.error("github_oauth_state_incomplete")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Incomplete OAuth state. Please restart the authorization flow."
             )
 
         # Validate state (CSRF protection)
         if not provider.validate_state(state, stored_state):
             logger.error(
                 "github_oauth_state_mismatch",
-                user_id=user.user_id,
+                user_id=user_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -193,7 +216,7 @@ async def github_callback(
 
         logger.info(
             "github_oauth_callback_received",
-            user_id=user.user_id,
+            user_id=user_id,
             has_code=bool(code),
         )
 
@@ -217,7 +240,7 @@ async def github_callback(
 
         oauth_connection = await token_manager.store_oauth_connection(
             db=db,
-            user_id=user.user_id,
+            user_id=user_id,
             provider="github",
             provider_user_id=str(github_user["id"]),
             provider_username=github_user["login"],
@@ -231,7 +254,7 @@ async def github_callback(
 
         logger.info(
             "github_oauth_success",
-            user_id=user.user_id,
+            user_id=user_id,
             github_username=github_user["login"],
             connection_id=oauth_connection.id,
         )
