@@ -14,6 +14,7 @@ from .repositories import router as repositories_router
 from .workflows import router as workflows_router
 from .prs import router as prs_router
 from .analytics import router as analytics_router
+from .webhooks import router as webhooks_router
 
 # Create v2 API router
 router = APIRouter(prefix="/v2", tags=["API v2"])
@@ -24,6 +25,7 @@ router.include_router(repositories_router)
 router.include_router(workflows_router)
 router.include_router(prs_router)
 router.include_router(analytics_router)
+router.include_router(webhooks_router)
 
 # Future routers will be added here:
 # router.include_router(integrations_router)

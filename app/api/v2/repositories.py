@@ -31,6 +31,7 @@ from app.services.oauth.github_oauth import GitHubOAuthProvider
 from app.services.oauth.gitlab_oauth import GitLabOAuthProvider
 from app.services.oauth.token_manager import get_token_manager
 from app.services.repository.repository_manager import RepositoryManager
+from app.services.webhook.webhook_manager import WebhookManager
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/repositories", tags=["Repositories"])
@@ -55,6 +56,39 @@ def get_repository_manager() -> RepositoryManager:
     return RepositoryManager(
         github_provider=github_provider,
         token_manager=token_manager,
+    )
+
+
+def get_webhook_manager() -> WebhookManager:
+    """
+    Get webhook manager instance.
+
+    Returns:
+        WebhookManager instance
+    """
+    github_provider = GitHubOAuthProvider(
+        client_id=settings.github_oauth_client_id or "",
+        client_secret=settings.github_oauth_client_secret or "",
+        redirect_uri=settings.github_oauth_redirect_uri or "",
+        scopes=[],
+    )
+
+    gitlab_provider = None
+    if settings.gitlab_oauth_client_id:
+        gitlab_provider = GitLabOAuthProvider(
+            client_id=settings.gitlab_oauth_client_id or "",
+            client_secret=settings.gitlab_oauth_client_secret or "",
+            redirect_uri=settings.gitlab_oauth_redirect_uri or "",
+            scopes=[],
+        )
+
+    token_manager = get_token_manager(settings.oauth_token_encryption_key)
+
+    return WebhookManager(
+        token_manager=token_manager,
+        github_provider=github_provider,
+        gitlab_provider=gitlab_provider,
+        webhook_base_url=settings.webhook_base_url or "",
     )
 
 
@@ -150,9 +184,9 @@ async def connect_repository(
 
     **Flow:**
     1. Validates repository access via OAuth
-    2. Optionally sets up webhook in repository
-    3. Creates repository connection record
-    4. Returns connection details
+    2. Creates repository connection record
+    3. Automatically sets up webhook in repository (via WebhookManager)
+    4. Returns connection details with webhook status
 
     **Request Body:**
     - repository_full_name: Full repository name (owner/repo)
@@ -161,24 +195,46 @@ async def connect_repository(
     - webhook_events: Events to subscribe to (default: workflow_run, pull_request, push)
 
     **Returns:**
-    - Repository connection details
+    - Repository connection details with webhook status
     """
     try:
         user = current_user_data["user"]
         repo_manager = get_repository_manager()
 
-        # Build webhook URL
-        webhook_url = f"{settings.webhook_base_url}/api/v1/webhook/github/{user.user_id}" if settings.webhook_base_url else None
-
+        # Create repository connection (without webhook setup)
         connection = await repo_manager.connect_repository(
             db=db,
             user_id=user.user_id,
             repository_full_name=request.repository_full_name,
             auto_pr_enabled=request.auto_pr_enabled,
-            setup_webhook=request.setup_webhook,
-            webhook_events=request.webhook_events,
-            webhook_url=webhook_url,
+            setup_webhook=False,  # We'll handle webhook setup separately
+            webhook_events=None,
+            webhook_url=None,
         )
+
+        # AUTO-CREATE WEBHOOK using WebhookManager
+        if request.setup_webhook:
+            webhook_manager = get_webhook_manager()
+            try:
+                webhook_result = await webhook_manager.create_webhook(
+                    db=db,
+                    repository_connection_id=connection.id,
+                    events=request.webhook_events,
+                )
+                logger.info(
+                    "webhook_auto_created",
+                    repository=request.repository_full_name,
+                    webhook_id=webhook_result["webhook_id"],
+                    events=webhook_result["events"],
+                )
+            except Exception as e:
+                logger.warning(
+                    "webhook_auto_creation_failed",
+                    repository=request.repository_full_name,
+                    error=str(e),
+                )
+                # Continue - repository is connected, user can setup webhook later
+                connection.webhook_status = "failed"
 
         db.commit()
 
@@ -400,35 +456,46 @@ async def update_repository_connection(
     response_model=DisconnectRepositoryResponse,
     status_code=status.HTTP_200_OK,
     summary="Disconnect Repository",
-    description="Disconnect a repository and optionally delete its webhook.",
+    description="Disconnect a repository and automatically delete its webhook.",
 )
 async def disconnect_repository(
     connection_id: str,
-    delete_webhook: bool = Query(True, description="Delete webhook from GitHub"),
+    delete_webhook: bool = Query(True, description="Delete webhook from GitHub/GitLab"),
     db: Session = Depends(get_db),
     current_user_data: dict = Depends(get_current_active_user),
 ) -> DisconnectRepositoryResponse:
     """
     Disconnect a repository from DevFlowFix.
 
+    **Flow:**
+    1. Validate repository connection ownership
+    2. Automatically delete webhook via WebhookManager (if delete_webhook=true)
+    3. Soft delete repository connection
+    4. Return disconnection confirmation
+
     **Path Parameters:**
     - connection_id: Repository connection ID
 
     **Query Parameters:**
-    - delete_webhook: Delete webhook from GitHub (default: true)
+    - delete_webhook: Delete webhook from provider (default: true)
 
     **Returns:**
-    - Disconnection confirmation
+    - Disconnection confirmation with webhook deletion status
     """
     try:
         user = current_user_data["user"]
         repo_manager = get_repository_manager()
 
+        # Get WebhookManager for auto-deletion
+        webhook_manager = get_webhook_manager()
+
+        # Disconnect repository with auto-webhook deletion
         result = await repo_manager.disconnect_repository(
             db=db,
             user_id=user.user_id,
             connection_id=connection_id,
             delete_webhook=delete_webhook,
+            webhook_manager=webhook_manager,  # Pass WebhookManager for auto-deletion
         )
 
         db.commit()
@@ -437,6 +504,7 @@ async def disconnect_repository(
             "repository_disconnected",
             user_id=user.user_id,
             connection_id=connection_id,
+            webhook_deleted=result["webhook_deleted"],
         )
 
         return DisconnectRepositoryResponse(
@@ -444,7 +512,8 @@ async def disconnect_repository(
             connection_id=result["connection_id"],
             repository_full_name=result["repository_full_name"],
             webhook_deleted=result["webhook_deleted"],
-            message=f"Repository {result['repository_full_name']} successfully disconnected",
+            message=f"Repository {result['repository_full_name']} successfully disconnected" +
+                    (f" and webhook deleted" if result["webhook_deleted"] else ""),
         )
 
     except ValueError as e:
