@@ -376,3 +376,216 @@ class GitHubOAuthProvider(OAuthProvider):
                     status_code=response.status_code,
                 )
                 return False
+
+    async def get_workflow_runs(
+        self,
+        access_token: str,
+        owner: str,
+        repo: str,
+        page: int = 1,
+        per_page: int = 30,
+        status: Optional[str] = None,
+        branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get workflow runs for a repository.
+
+        Args:
+            access_token: Valid GitHub access token
+            owner: Repository owner
+            repo: Repository name
+            page: Page number for pagination
+            per_page: Results per page (max 100)
+            status: Filter by status (completed, in_progress, queued)
+            branch: Filter by branch name
+
+        Returns:
+            Workflow runs response with total_count and workflow_runs list
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        params = {
+            "page": page,
+            "per_page": per_page,
+        }
+
+        if status:
+            params["status"] = status
+        if branch:
+            params["branch"] = branch
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/actions/runs",
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+            logger.info(
+                "github_workflow_runs_fetched",
+                owner=owner,
+                repo=repo,
+                count=len(data.get("workflow_runs", [])),
+                total_count=data.get("total_count", 0),
+            )
+
+            return data
+
+    async def get_workflow_run(
+        self,
+        access_token: str,
+        owner: str,
+        repo: str,
+        run_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Get a specific workflow run.
+
+        Args:
+            access_token: Valid GitHub access token
+            owner: Repository owner
+            repo: Repository name
+            run_id: Workflow run ID
+
+        Returns:
+            Workflow run object
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+
+            response.raise_for_status()
+            run_data = response.json()
+
+            logger.info(
+                "github_workflow_run_fetched",
+                owner=owner,
+                repo=repo,
+                run_id=run_id,
+                status=run_data.get("status"),
+                conclusion=run_data.get("conclusion"),
+            )
+
+            return run_data
+
+    async def get_pull_requests(
+        self,
+        access_token: str,
+        owner: str,
+        repo: str,
+        state: str = "all",
+        page: int = 1,
+        per_page: int = 30,
+        sort: str = "created",
+        direction: str = "desc",
+    ) -> list[Dict[str, Any]]:
+        """
+        Get pull requests for a repository.
+
+        Args:
+            access_token: Valid GitHub access token
+            owner: Repository owner
+            repo: Repository name
+            state: Filter by state (open, closed, all)
+            page: Page number for pagination
+            per_page: Results per page (max 100)
+            sort: Sort by (created, updated, popularity, long-running)
+            direction: Sort direction (asc, desc)
+
+        Returns:
+            List of pull request objects
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls",
+                params={
+                    "state": state,
+                    "page": page,
+                    "per_page": per_page,
+                    "sort": sort,
+                    "direction": direction,
+                },
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+
+            response.raise_for_status()
+            prs = response.json()
+
+            logger.info(
+                "github_pull_requests_fetched",
+                owner=owner,
+                repo=repo,
+                count=len(prs),
+                state=state,
+            )
+
+            return prs
+
+    async def get_pull_request(
+        self,
+        access_token: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> Dict[str, Any]:
+        """
+        Get a specific pull request.
+
+        Args:
+            access_token: Valid GitHub access token
+            owner: Repository owner
+            repo: Repository name
+            pr_number: Pull request number
+
+        Returns:
+            Pull request object
+
+        Raises:
+            httpx.HTTPError: If API request fails
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+
+            response.raise_for_status()
+            pr_data = response.json()
+
+            logger.info(
+                "github_pull_request_fetched",
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
+                state=pr_data.get("state"),
+            )
+
+            return pr_data
