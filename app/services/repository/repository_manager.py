@@ -273,15 +273,21 @@ class RepositoryManager:
         user_id: str,
         connection_id: str,
         delete_webhook: bool = True,
+        webhook_manager=None,
     ) -> Dict[str, Any]:
         """
         Disconnect a repository from DevFlowFix.
+
+        NOTE: This method is deprecated for webhook deletion. Use WebhookManager.delete_webhook()
+        directly for better multi-provider support. This method is kept for backward compatibility
+        but webhook deletion logic has been moved to WebhookManager.
 
         Args:
             db: Database session
             user_id: User ID
             connection_id: Repository connection ID
-            delete_webhook: Whether to delete webhook from GitHub
+            delete_webhook: Whether to delete webhook from provider
+            webhook_manager: Optional WebhookManager instance for webhook deletion
 
         Returns:
             Dict with disconnection details
@@ -311,35 +317,49 @@ class RepositoryManager:
 
         webhook_deleted = False
 
-        # Delete webhook if requested and exists
+        # Delete webhook using WebhookManager if provided
         if delete_webhook and connection.webhook_id:
-            try:
-                oauth_connection = await self.token_manager.get_oauth_connection(
-                    db=db,
-                    user_id=user_id,
-                    provider="github",
-                )
-                access_token = self.token_manager.get_decrypted_token(oauth_connection)
+            if webhook_manager:
+                try:
+                    webhook_deleted = await webhook_manager.delete_webhook(
+                        db=db,
+                        repository_connection_id=connection_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "webhook_deletion_via_manager_failed",
+                        repository=connection.repository_full_name,
+                        error=str(e),
+                    )
+            else:
+                # Fallback to old method if WebhookManager not provided (backward compatibility)
+                try:
+                    oauth_connection = await self.token_manager.get_oauth_connection(
+                        db=db,
+                        user_id=user_id,
+                        provider=connection.provider,
+                    )
+                    access_token = self.token_manager.get_decrypted_token(oauth_connection)
 
-                owner, repo = connection.repository_full_name.split("/")
-                await self.github_provider.delete_webhook(
-                    access_token=access_token,
-                    owner=owner,
-                    repo=repo,
-                    webhook_id=int(connection.webhook_id),
-                )
-                webhook_deleted = True
-                logger.info(
-                    "webhook_deleted",
-                    repository=connection.repository_full_name,
-                    webhook_id=connection.webhook_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "webhook_deletion_failed",
-                    repository=connection.repository_full_name,
-                    error=str(e),
-                )
+                    owner, repo = connection.repository_full_name.split("/")
+                    await self.github_provider.delete_webhook(
+                        access_token=access_token,
+                        owner=owner,
+                        repo=repo,
+                        hook_id=int(connection.webhook_id),
+                    )
+                    webhook_deleted = True
+                    logger.info(
+                        "webhook_deleted_legacy",
+                        repository=connection.repository_full_name,
+                        webhook_id=connection.webhook_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "webhook_deletion_failed",
+                        repository=connection.repository_full_name,
+                        error=str(e),
+                    )
 
         # Soft delete connection
         connection.is_enabled = False
