@@ -765,11 +765,6 @@ class BackgroundJobTable(SQLModel, table=True):
         Index('idx_jobs_type_status', 'job_type', 'status'),
     )
 
-
-# ============================================================================
-# OAuth & Repository Connection Tables (V2 API)
-# ============================================================================
-
 class OAuthConnectionTable(SQLModel, table=True):
     """
     OAuth Connection Table
@@ -851,7 +846,11 @@ class RepositoryConnectionTable(SQLModel, table=True):
     # Webhook Information
     webhook_id: Optional[str] = Field(default=None, max_length=100)
     webhook_url: Optional[str] = Field(default=None, max_length=500)
-    webhook_secret: Optional[str] = Field(default=None, max_length=255)
+    webhook_secret: Optional[str] = Field(default=None, max_length=512)  # Encrypted secret
+    webhook_events: Optional[dict] = Field(default=None, sa_column=Column(JSON))  # ['workflow_run', 'pull_request', 'push']
+    webhook_status: Optional[str] = Field(default=None, max_length=50)  # 'active', 'inactive', 'failed'
+    webhook_created_at: Optional[datetime] = Field(default=None)
+    webhook_last_delivery_at: Optional[datetime] = Field(default=None)
 
     # Configuration
     is_enabled: bool = Field(default=True, index=True)
