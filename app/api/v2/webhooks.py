@@ -73,6 +73,14 @@ async def github_webhook(
             delivery_id=delivery_id,
         )
 
+        # Check if signature header exists
+        if not signature:
+            logger.error("missing_signature_header")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-Hub-Signature-256 header. Webhook secret not configured in GitHub."
+            )
+
         # Get raw body for signature verification
         body = await request.body()
 
@@ -109,11 +117,34 @@ async def github_webhook(
             )
             return {"status": "ok", "message": "Repository not connected"}
 
+        # Check if webhook secret exists in database
+        if not repo_conn.webhook_secret:
+            logger.error(
+                "missing_webhook_secret_in_db",
+                repository=repository_full_name,
+                connection_id=repo_conn.id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Webhook secret not found. Please reconnect the repository."
+            )
+
         # Get token manager for secret decryption
         token_manager = get_token_manager(settings.oauth_token_encryption_key)
 
         # Decrypt webhook secret
-        webhook_secret = token_manager.decrypt_token(repo_conn.webhook_secret)
+        try:
+            webhook_secret = token_manager.decrypt_token(repo_conn.webhook_secret)
+        except Exception as e:
+            logger.error(
+                "webhook_secret_decryption_failed",
+                repository=repository_full_name,
+                error=str(e),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to decrypt webhook secret. Please reconnect the repository."
+            )
 
         # Verify signature
         try:
