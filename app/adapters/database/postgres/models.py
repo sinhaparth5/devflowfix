@@ -847,7 +847,7 @@ class RepositoryConnectionTable(SQLModel, table=True):
     webhook_id: Optional[str] = Field(default=None, max_length=100)
     webhook_url: Optional[str] = Field(default=None, max_length=500)
     webhook_secret: Optional[str] = Field(default=None, max_length=512)  # Encrypted secret
-    webhook_events: Optional[dict] = Field(default=None, sa_column=Column(JSON))  # ['workflow_run', 'pull_request', 'push']
+    webhook_events: Optional[list] = Field(default=None, sa_column=Column(JSON))  # ['workflow_run', 'pull_request', 'push']
     webhook_status: Optional[str] = Field(default=None, max_length=50)  # 'active', 'inactive', 'failed'
     webhook_created_at: Optional[datetime] = Field(default=None)
     webhook_last_delivery_at: Optional[datetime] = Field(default=None)

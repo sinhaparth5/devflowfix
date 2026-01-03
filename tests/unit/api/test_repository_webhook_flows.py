@@ -368,7 +368,7 @@ class TestRepositoryWebhookFlows:
         assert result["events"] == custom_events
 
         # Verify webhook_events was stored in database
-        assert repo_conn.webhook_events == {"events": custom_events}
+        assert repo_conn.webhook_events == custom_events
 
     @pytest.mark.asyncio
     async def test_disconnect_repository_not_found(

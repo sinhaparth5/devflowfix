@@ -141,7 +141,7 @@ class WebhookManager:
         repo_conn.webhook_id = str(result["id"])
         repo_conn.webhook_url = webhook_url
         repo_conn.webhook_secret = encrypted_secret
-        repo_conn.webhook_events = {"events": events}  # Store as JSON
+        repo_conn.webhook_events = events  # Store as JSON array
         repo_conn.webhook_status = "active"
         repo_conn.webhook_created_at = datetime.now(timezone.utc)
 
