@@ -89,11 +89,6 @@ async def create_pr_for_incident(
     """
     try:
         user = current_user_data["user"]
-        pr_creator = get_pr_creator()
-
-        # For now, we'll create a simple example fix
-        # In production, this would integrate with AI analysis
-        from app.core.schemas.pr import PRFileChange
 
         # Get incident to understand what needs to be fixed
         incident = db.query(IncidentTable).filter(
@@ -107,43 +102,146 @@ async def create_pr_for_incident(
                 detail=f"Incident {request.incident_id} not found"
             )
 
-        # Example: Create a simple README update as a placeholder
-        # In production, this would be replaced with actual AI-generated fixes
-        file_changes = [
-            PRFileChange(
-                file_path="README.md",
-                change_type="modified",
-                new_content=f"# Fixed by DevFlowFix\n\nThis repository was automatically fixed for incident {incident.incident_id}.\n",
-                explanation="Added DevFlowFix fix notice",
-            )
-        ]
-
-        # TODO: Integrate with AI analysis system to generate actual fixes
-        ai_analysis = None
+        # Use existing services to generate AI-powered fixes
         if request.use_ai_analysis:
-            ai_analysis = f"AI Analysis: Incident {incident.incident_id} requires investigation."
+            try:
+                logger.info(
+                    "generating_ai_fixes",
+                    incident_id=request.incident_id,
+                    user_id=user.user_id,
+                )
 
-        result = await pr_creator.create_pr_for_incident(
-            db=db,
-            incident_id=request.incident_id,
-            user_id=user.user_id,
-            file_changes=file_changes,
-            branch_name=request.branch_name,
-            draft=request.draft_pr,
-            ai_analysis=ai_analysis,
-        )
+                # Use existing services (same as webhook)
+                from app.services.github_log_parser import GitHubLogExtractor
+                from app.services.pr_creator import PRCreatorService
+                from app.core.models.incident import Incident as DomainIncident
+                from app.core.enums import IncidentSource
+                from app.dependencies import get_service_container
 
-        db.commit()
+                token_manager = get_token_manager(settings.oauth_token_encryption_key)
+                container = get_service_container()
 
-        logger.info(
-            "pr_created_via_api",
-            user_id=user.user_id,
-            incident_id=request.incident_id,
-            pr_number=result.get("pr_number"),
-            success=result["success"],
-        )
+                # Get repository connection
+                repo_conn = db.query(RepositoryConnectionTable).filter(
+                    RepositoryConnectionTable.user_id == user.user_id,
+                    RepositoryConnectionTable.repository_full_name == incident.repository,
+                    RepositoryConnectionTable.is_enabled == True,
+                ).first()
 
-        return CreatePRResponse(**result)
+                if not repo_conn:
+                    raise ValueError(f"No repository connection found for {incident.repository}")
+
+                # Get OAuth token
+                oauth_conn = await token_manager.get_oauth_connection(
+                    db=db,
+                    user_id=user.user_id,
+                    provider="github",
+                )
+
+                if not oauth_conn:
+                    raise ValueError("No GitHub OAuth connection found")
+
+                access_token = token_manager.get_decrypted_token(oauth_conn)
+                owner, repo = incident.repository.split("/")
+                run_id = incident.metadata.get("run_id") if incident.metadata else None
+
+                if not run_id and incident.workflow_run:
+                    run_id = incident.workflow_run.run_id
+
+                if not run_id:
+                    raise ValueError("No workflow run ID found in incident")
+
+                # Parse logs using existing GitHubLogExtractor
+                log_extractor = GitHubLogExtractor(github_token=access_token)
+                error_summary = await log_extractor.fetch_and_parse_logs(
+                    owner=owner,
+                    repo=repo,
+                    run_id=int(run_id),
+                )
+
+                if not error_summary:
+                    raise ValueError("No errors found in workflow logs")
+
+                # Convert to domain model
+                domain_incident = DomainIncident(
+                    incident_id=incident.incident_id,
+                    source=IncidentSource.GITHUB,
+                    severity=incident.severity,
+                    error_log=error_summary,
+                    error_message=incident.title or "Workflow failure",
+                    context={
+                        "repository": incident.repository,
+                        "workflow": incident.workflow_name,
+                        "branch": incident.branch,
+                        "commit": incident.commit_sha,
+                        "run_id": run_id,
+                        "user_id": user.user_id,
+                    },
+                    timestamp=incident.created_at,
+                )
+
+                # Use existing analyzer service
+                analyzer = container.get_analyzer_service(db)
+                if not analyzer:
+                    raise ValueError("Analyzer service not available")
+
+                analysis = await analyzer.analyze(
+                    incident=domain_incident,
+                    similar_incidents=[],
+                )
+
+                solution = await analyzer.llm.generate_solution(
+                    error_log=error_summary,
+                    failure_type=analysis.category.value if analysis.category else "build_failure",
+                    root_cause=analysis.root_cause or "Workflow failure",
+                    context=domain_incident.context,
+                    repository_code=None,
+                )
+
+                logger.info(
+                    "solution_generated",
+                    incident_id=request.incident_id,
+                    has_code_changes=bool(solution.get("code_changes")),
+                )
+
+                # Create PR using existing PRCreatorService
+                if solution.get("code_changes"):
+                    pr_creator_service = PRCreatorService()
+                    pr_result = await pr_creator_service.create_fix_pr(
+                        incident=domain_incident,
+                        analysis=analysis,
+                        solution=solution,
+                        user_id=user.user_id,
+                    )
+
+                    return CreatePRResponse(
+                        success=True,
+                        pr_number=pr_result.get("number"),
+                        pr_url=pr_result.get("html_url"),
+                        branch_name=pr_result.get("head", {}).get("ref"),
+                        files_changed=len(solution.get("code_changes", [])),
+                        incident_id=request.incident_id,
+                        ai_analysis_used=True,
+                    )
+                else:
+                    raise ValueError("No code changes generated by AI")
+
+            except Exception as e:
+                logger.error(
+                    "ai_fix_generation_failed",
+                    incident_id=request.incident_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"AI fix generation failed: {str(e)}"
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="AI analysis is required for automatic PR creation. Set use_ai_analysis=true"
+            )
 
     except ValueError as e:
         logger.error(

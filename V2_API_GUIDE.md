@@ -134,12 +134,25 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header (excep
 
 ## Pull Request Management
 
-### Create PR
+### Automatic PR Creation
+
+**PRs are created AUTOMATICALLY when workflows fail!**
+
+When a workflow fails:
+1. Webhook creates incident
+2. If `auto_pr_enabled: true` on repository
+3. AI analyzes errors from logs
+4. Generates fixes for exact files/lines
+5. Creates PR automatically
+
+**No manual action needed!**
+
+### Manual PR Creation (Optional)
 
 **Create PR for Incident**
 - `POST /v2/prs/create`
 - Send: `{ incident_id, branch_name?, use_ai_analysis, auto_commit, draft_pr }`
-- Auto-generates fix and creates PR
+- Use if auto-PR is disabled or for additional PRs
 - Returns: PR number, URL, details
 
 ### Get PR Information
@@ -217,11 +230,11 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header (excep
 2. `GET /v2/analytics/workflows/trends` → View trends
 3. Webhooks auto-create incidents for failures
 
-### Auto-Fix Flow
-1. Webhook creates incident from failed workflow
-2. `POST /v2/prs/create` → Create fix PR
-3. `GET /v2/prs/incidents/{id}` → Track PR status
-4. PR merged → Incident resolved
+### Auto-Fix Flow (Fully Automatic!)
+1. Workflow fails → Webhook creates incident
+2. **Automatic:** AI analyzes logs, generates fixes, creates PR
+3. `GET /v2/prs/incidents/{id}` → Check auto-created PR
+4. Developer reviews → Merges PR → Incident auto-resolved
 
 ### Dashboard Display
 1. `GET /v2/analytics/dashboard` → Get all metrics

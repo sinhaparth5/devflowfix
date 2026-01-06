@@ -313,6 +313,7 @@ async def process_workflow_run_event(
                            f"Branch: {workflow_run.branch}\n"
                            f"Message: {workflow_run.commit_message}",
                 metadata={
+                    "run_id": run_id,  # Store run_id for AI fix generator
                     "run_url": workflow_run.run_url,
                     "logs_url": workflow_run.logs_url,
                     "event": workflow_run.event,
@@ -323,6 +324,7 @@ async def process_workflow_run_event(
                 updated_at=datetime.now(timezone.utc),
             )
             db.add(incident)
+            db.flush()  # Ensure incident is committed before PR creation
 
             logger.info(
                 "incident_created_from_webhook",
@@ -331,11 +333,144 @@ async def process_workflow_run_event(
                 repository=repo_conn.repository_full_name,
             )
 
+            # Automatically create PR if auto_pr_enabled
+            pr_created = False
+            pr_number = None
+            pr_url = None
+
+            if repo_conn.auto_pr_enabled:
+                try:
+                    logger.info(
+                        "auto_pr_creation_start",
+                        incident_id=incident_id,
+                        repository=repo_conn.repository_full_name,
+                    )
+
+                    # Use existing services (GitHubLogParser + LLMAdapter + PRCreator)
+                    from app.services.github_log_parser import GitHubLogExtractor
+                    from app.services.oauth.token_manager import get_token_manager
+                    from app.services.pr_creator import PRCreatorService
+                    from app.core.models.incident import Incident
+                    from app.core.models.analysis import AnalysisResult
+                    from app.core.enums import IncidentSource
+                    from app.dependencies import get_service_container
+
+                    settings = get_settings()
+                    token_manager = get_token_manager(settings.oauth_token_encryption_key)
+                    container = get_service_container()
+
+                    # Get OAuth token
+                    oauth_conn = await token_manager.get_oauth_connection(
+                        db=db,
+                        user_id=repo_conn.user_id,
+                        provider="github",
+                    )
+
+                    if not oauth_conn:
+                        raise ValueError("No GitHub OAuth connection found")
+
+                    access_token = token_manager.get_decrypted_token(oauth_conn)
+                    owner, repo = repo_conn.repository_full_name.split("/")
+
+                    # Parse workflow logs to get errors
+                    log_extractor = GitHubLogExtractor(github_token=access_token)
+                    error_summary = await log_extractor.fetch_and_parse_logs(
+                        owner=owner,
+                        repo=repo,
+                        run_id=int(run_id),
+                    )
+
+                    if not error_summary:
+                        logger.warning("no_errors_found_in_logs", incident_id=incident_id)
+                        raise ValueError("No errors found in workflow logs")
+
+                    logger.info("workflow_errors_parsed", incident_id=incident_id)
+
+                    # Convert to domain model for analysis
+                    domain_incident = Incident(
+                        incident_id=incident_id,
+                        source=IncidentSource.GITHUB,
+                        severity=incident.severity,
+                        error_log=error_summary,
+                        error_message=incident.title,
+                        context={
+                            "repository": repo_conn.repository_full_name,
+                            "workflow": workflow_run.workflow_name,
+                            "branch": workflow_run.branch,
+                            "commit": workflow_run.commit_sha,
+                            "run_id": run_id,
+                            "user_id": repo_conn.user_id,
+                        },
+                        timestamp=incident.created_at,
+                    )
+
+                    # Use existing LLM service to analyze and generate solution
+                    analyzer = container.get_analyzer_service(db)
+                    if not analyzer:
+                        raise ValueError("Analyzer service not available")
+
+                    analysis = await analyzer.analyze(
+                        incident=domain_incident,
+                        similar_incidents=[],
+                    )
+
+                    solution = await analyzer.llm.generate_solution(
+                        error_log=error_summary,
+                        failure_type=analysis.category.value if analysis.category else "build_failure",
+                        root_cause=analysis.root_cause or "Workflow failure",
+                        context=domain_incident.context,
+                        repository_code=None,
+                    )
+
+                    logger.info(
+                        "solution_generated",
+                        incident_id=incident_id,
+                        has_code_changes=bool(solution.get("code_changes")),
+                    )
+
+                    # Create PR if we have code changes
+                    if solution.get("code_changes"):
+                        pr_creator = PRCreatorService()
+                        pr_result = await pr_creator.create_fix_pr(
+                            incident=domain_incident,
+                            analysis=analysis,
+                            solution=solution,
+                            user_id=repo_conn.user_id,
+                        )
+
+                        pr_created = True
+                        pr_number = pr_result.get("number")
+                        pr_url = pr_result.get("html_url")
+
+                        logger.info(
+                            "auto_pr_created",
+                            incident_id=incident_id,
+                            pr_number=pr_number,
+                            pr_url=pr_url,
+                        )
+                    else:
+                        logger.info(
+                            "no_code_changes_generated",
+                            incident_id=incident_id,
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        "auto_pr_creation_error",
+                        incident_id=incident_id,
+                        error=str(e),
+                        exc_info=True,
+                    )
+                    # Continue - incident is still created even if PR fails
+
             return {
                 "status": "ok",
                 "action": "incident_created",
                 "incident_id": incident_id,
                 "workflow_run_id": run_id,
+                "auto_pr_created": pr_created,
+                "pr_number": pr_number,
+                "pr_url": pr_url,
             }
 
     return {
