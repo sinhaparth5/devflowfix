@@ -208,6 +208,100 @@ async def github_webhook(
         return {"status": "error", "message": str(e)}
 
 
+async def _fetch_error_file_contents(
+    access_token: str,
+    owner: str,
+    repo: str,
+    branch: str,
+    error_summary: str,
+) -> str:
+    """
+    Extract file paths from error logs and fetch their contents from GitHub.
+
+    Args:
+        access_token: GitHub access token
+        owner: Repository owner
+        repo: Repository name
+        branch: Branch name
+        error_summary: Error log summary containing file paths
+
+    Returns:
+        Combined code from error files
+    """
+    import re
+    import base64
+    from app.adapters.external.github.client import GitHubClient
+
+    # Extract file paths from error logs
+    # Patterns: "path/to/file.py:42", "at file.js:10", "src/app.ts line 25"
+    file_patterns = [
+        r'[\w\-_/\.]+\.(py|js|ts|jsx|tsx|java|go|rb|php|cs|cpp|c|h|rs|kt|swift|yaml|yml|json|xml):(\d+)',
+        r'File "([^"]+\.(?:py|js|ts|jsx|tsx|java|go|rb|php))", line (\d+)',
+        r'at ([^\s:]+\.(?:py|js|ts|jsx|tsx|java|go|rb|php)):(\d+)',
+    ]
+
+    file_paths = set()
+    for pattern in file_patterns:
+        matches = re.findall(pattern, error_summary)
+        for match in matches:
+            if isinstance(match, tuple):
+                file_path = match[0] if '.' in match[0] else f"{match[0]}"
+            else:
+                file_path = match
+            # Clean up path
+            file_path = file_path.strip()
+            if file_path and not file_path.startswith('http'):
+                file_paths.add(file_path)
+
+    logger.info(
+        "extracted_file_paths_from_errors",
+        file_count=len(file_paths),
+        files=list(file_paths)[:5],  # Log first 5
+    )
+
+    if not file_paths:
+        return None
+
+    # Fetch file contents from GitHub
+    github_client = GitHubClient(token=access_token)
+    repository_code_parts = []
+
+    for file_path in list(file_paths)[:5]:  # Limit to first 5 files to avoid token limits
+        try:
+            file_data = await github_client.get_file_contents(
+                owner=owner,
+                repo=repo,
+                path=file_path,
+                ref=branch,
+            )
+
+            # Decode content
+            content = base64.b64decode(file_data["content"]).decode('utf-8')
+
+            repository_code_parts.append(
+                f"### File: {file_path}\n```\n{content[:1500]}\n```\n"
+            )
+
+            logger.info(
+                "fetched_error_file",
+                file_path=file_path,
+                content_length=len(content),
+            )
+
+        except Exception as e:
+            logger.warning(
+                "failed_to_fetch_error_file",
+                file_path=file_path,
+                error=str(e),
+            )
+            continue
+
+    if not repository_code_parts:
+        return None
+
+    return "\n\n".join(repository_code_parts)
+
+
 async def process_workflow_run_event(
     db: Session,
     payload: Dict[str, Any],
@@ -396,6 +490,33 @@ async def process_workflow_run_event(
 
                     logger.info("workflow_errors_parsed", incident_id=incident_id)
 
+                    # Fetch repository code from error files
+                    logger.info("fetching_repository_code", incident_id=incident_id)
+                    repository_code = None
+                    try:
+                        repository_code = await _fetch_error_file_contents(
+                            access_token=access_token,
+                            owner=owner,
+                            repo=repo,
+                            branch=workflow_run.branch,
+                            error_summary=error_summary,
+                        )
+                        if repository_code:
+                            logger.info(
+                                "repository_code_fetched",
+                                incident_id=incident_id,
+                                code_length=len(repository_code),
+                            )
+                        else:
+                            logger.warning("no_repository_code_fetched", incident_id=incident_id)
+                    except Exception as e:
+                        logger.warning(
+                            "fetch_repository_code_failed",
+                            incident_id=incident_id,
+                            error=str(e),
+                        )
+                        # Continue without repository code
+
                     # Convert to domain model for analysis
                     domain_incident = Incident(
                         incident_id=incident_id,
@@ -433,13 +554,13 @@ async def process_workflow_run_event(
                         root_cause=analysis.root_cause,
                     )
 
-                    logger.info("generating_solution", incident_id=incident_id)
+                    logger.info("generating_solution", incident_id=incident_id, has_code=bool(repository_code))
                     solution = await analyzer.llm.generate_solution(
                         error_log=error_summary,
                         failure_type=analysis.category.value if analysis.category else "build_failure",
                         root_cause=analysis.root_cause or "Workflow failure",
                         context=domain_incident.context,
-                        repository_code=None,
+                        repository_code=repository_code,
                     )
 
                     if solution is None:
