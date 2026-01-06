@@ -269,16 +269,19 @@ async def process_workflow_run_event(
             run_number=workflow_run_data["run_number"],
             workflow_name=workflow_run_data["name"],
             workflow_id=str(workflow_run_data["workflow_id"]),
-            event=workflow_run_data["event"],
             status=workflow_run_data["status"],
             conclusion=workflow_run_data.get("conclusion"),
             branch=workflow_run_data["head_branch"],
             commit_sha=workflow_run_data["head_sha"],
             commit_message=workflow_run_data.get("head_commit", {}).get("message", ""),
             author=workflow_run_data.get("head_commit", {}).get("author", {}).get("name", ""),
-            run_started_at=datetime.fromisoformat(workflow_run_data["run_started_at"].replace("Z", "+00:00")) if workflow_run_data.get("run_started_at") else None,
+            started_at=datetime.fromisoformat(workflow_run_data["run_started_at"].replace("Z", "+00:00")) if workflow_run_data.get("run_started_at") else None,
             run_url=workflow_run_data["html_url"],
-            logs_url=workflow_run_data.get("logs_url"),
+            run_metadata={
+                "event": workflow_run_data.get("event"),
+                "logs_url": workflow_run_data.get("logs_url"),
+                "workflow_path": workflow_run_data.get("path"),
+            },
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -287,39 +290,46 @@ async def process_workflow_run_event(
 
     # Create incident if workflow failed
     if workflow_run_data.get("conclusion") == "failure":
-        # Check if incident already exists
-        existing_incident = db.query(IncidentTable).filter(
-            IncidentTable.workflow_run_id == workflow_run.id,
-        ).first()
+        # Check if incident already exists (check context for workflow_run_id)
+        existing_incidents = db.query(IncidentTable).filter(
+            IncidentTable.user_id == repo_conn.user_id,
+            IncidentTable.source == "webhook",
+        ).all()
+
+        existing_incident = None
+        for inc in existing_incidents:
+            if inc.context and inc.context.get("workflow_run_id") == workflow_run.id:
+                existing_incident = inc
+                break
 
         if not existing_incident:
-            incident_id = f"INC-{uuid.uuid4().hex[:8].upper()}"
+            incident_id = f"inc_{uuid.uuid4().hex[:8]}"
+
+            error_log = f"Workflow run #{workflow_run.run_number} failed.\n\nCommit: {workflow_run.commit_sha[:7]}\nBranch: {workflow_run.branch}\nMessage: {workflow_run.commit_message}"
 
             incident = IncidentTable(
                 incident_id=incident_id,
                 user_id=repo_conn.user_id,
-                workflow_run_id=workflow_run.id,
-                repository=repo_conn.repository_full_name,
-                workflow_name=workflow_run.workflow_name,
-                branch=workflow_run.branch,
-                commit_sha=workflow_run.commit_sha,
-                run_number=workflow_run.run_number,
+                timestamp=datetime.now(timezone.utc),
                 severity="high",
-                status="open",
                 source="webhook",
-                title=f"Workflow '{workflow_run.workflow_name}' failed on {workflow_run.branch}",
-                description=f"Workflow run #{workflow_run.run_number} failed.\n\n"
-                           f"Commit: {workflow_run.commit_sha[:7]}\n"
-                           f"Branch: {workflow_run.branch}\n"
-                           f"Message: {workflow_run.commit_message}",
-                metadata={
-                    "run_id": run_id,  # Store run_id for AI fix generator
+                failure_type="workflow_failure",
+                error_log=error_log,
+                error_message=f"Workflow '{workflow_run.workflow_name}' failed on {workflow_run.branch}",
+                context={
+                    "workflow_run_id": workflow_run.id,
+                    "repository": repo_conn.repository_full_name,
+                    "workflow_name": workflow_run.workflow_name,
+                    "branch": workflow_run.branch,
+                    "commit_sha": workflow_run.commit_sha,
+                    "run_number": workflow_run.run_number,
+                    "run_id": run_id,
                     "run_url": workflow_run.run_url,
-                    "logs_url": workflow_run.logs_url,
-                    "event": workflow_run.event,
+                    "logs_url": workflow_run.run_metadata.get("logs_url") if workflow_run.run_metadata else None,
+                    "event": workflow_run.run_metadata.get("event") if workflow_run.run_metadata else None,
                     "author": workflow_run.author,
-                    "detected_by": "webhook",
                 },
+                raw_payload=payload,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -392,7 +402,7 @@ async def process_workflow_run_event(
                         source=IncidentSource.GITHUB,
                         severity=incident.severity,
                         error_log=error_summary,
-                        error_message=incident.title,
+                        error_message=incident.error_message,
                         context={
                             "repository": repo_conn.repository_full_name,
                             "workflow": workflow_run.workflow_name,
@@ -405,15 +415,25 @@ async def process_workflow_run_event(
                     )
 
                     # Use existing LLM service to analyze and generate solution
+                    logger.info("getting_analyzer_service", incident_id=incident_id)
                     analyzer = container.get_analyzer_service(db)
                     if not analyzer:
+                        logger.error("analyzer_service_not_available", incident_id=incident_id)
                         raise ValueError("Analyzer service not available")
 
+                    logger.info("starting_analysis", incident_id=incident_id)
                     analysis = await analyzer.analyze(
                         incident=domain_incident,
                         similar_incidents=[],
                     )
+                    logger.info(
+                        "analysis_completed",
+                        incident_id=incident_id,
+                        category=analysis.category.value if analysis.category else None,
+                        root_cause=analysis.root_cause,
+                    )
 
+                    logger.info("generating_solution", incident_id=incident_id)
                     solution = await analyzer.llm.generate_solution(
                         error_log=error_summary,
                         failure_type=analysis.category.value if analysis.category else "build_failure",
@@ -422,14 +442,20 @@ async def process_workflow_run_event(
                         repository_code=None,
                     )
 
+                    if solution is None:
+                        logger.warning("solution_is_none", incident_id=incident_id)
+                        solution = {}
+
                     logger.info(
                         "solution_generated",
                         incident_id=incident_id,
                         has_code_changes=bool(solution.get("code_changes")),
+                        solution_keys=list(solution.keys()) if solution else None,
+                        solution_type=type(solution).__name__,
                     )
 
                     # Create PR if we have code changes
-                    if solution.get("code_changes"):
+                    if solution and solution.get("code_changes"):
                         pr_creator = PRCreatorService()
                         pr_result = await pr_creator.create_fix_pr(
                             incident=domain_incident,
