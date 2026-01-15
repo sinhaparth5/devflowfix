@@ -1,13 +1,15 @@
 # Email Service Integration Documentation
 
-This document outlines all email notification requirements for integration with the .NET Email Microservice via gRPC.
+This document outlines all email notification requirements for integration with the .NET Email Microservice via REST API.
+
+**Base URL:** `https://devflowfix-mail-service.azurewebsites.net`
 
 ---
 
 ## Architecture Overview
 
 ```
-┌─────────────────────┐         gRPC          ┌─────────────────────┐
+┌─────────────────────┐       REST API        ┌─────────────────────┐
 │   DevFlowFix API    │ ───────────────────── │  .NET Email Service │
 │   (FastAPI/Python)  │                       │    (Microservice)   │
 └─────────────────────┘                       └─────────────────────┘
@@ -15,50 +17,75 @@ This document outlines all email notification requirements for integration with 
                                                         ▼
                                               ┌─────────────────────┐
                                               │   Email Provider    │
-                                              │ (SendGrid/SES/SMTP) │
+                                              │ (Azure Comm Svc)    │
                                               └─────────────────────┘
 ```
 
 ---
 
-## Email Types Summary
+## API Endpoints Summary
 
-| # | Email Type | Trigger Endpoint | Priority | File Location |
-|---|------------|------------------|----------|---------------|
-| 1 | Welcome Email | POST /auth/register | HIGH | auth.py:185 |
-| 2 | Email Verification | POST /auth/register | HIGH | auth.py:185 |
-| 3 | Password Reset Link | POST /auth/password/reset/request | CRITICAL | auth.py:822 |
-| 4 | Password Reset Confirmation | POST /auth/password/reset/confirm | HIGH | auth.py:848 |
-| 5 | Password Change Confirmation | POST /auth/password/change | HIGH | auth.py:779 |
-| 6 | MFA Setup Instructions | POST /auth/mfa/setup | MEDIUM | auth.py:880 |
-| 7 | MFA Enabled Notification | POST /auth/mfa/enable | MEDIUM | auth.py:913 |
-| 8 | MFA Disabled Warning | POST /auth/mfa/disable | MEDIUM | auth.py:952 |
-| 9 | New Login Alert | POST /auth/login | MEDIUM | auth.py:399 |
-| 10 | Account Locked Warning | POST /auth/login (failed) | HIGH | auth.py:374 |
-| 11 | Session Revoked Notification | POST /auth/sessions/revoke | MEDIUM | auth.py:1030 |
-| 12 | OAuth Account Created | POST /auth/oauth/google, /auth/oauth/github | MEDIUM | auth.py:1131, 1262 |
-| 13 | API Key Created | POST /auth/api-key | LOW | auth.py:1074 |
-| 14 | API Key Revoked | DELETE /auth/api-key | LOW | auth.py:1103 |
+| # | Email Type | API Endpoint | Method | Priority |
+|---|------------|--------------|--------|----------|
+| 1 | Welcome Email | `/api/email/welcome` | POST | HIGH |
+| 2 | Email Verification | `/api/email/verification` | POST | HIGH |
+| 3 | Password Reset Link | `/api/email/password-reset-link` | POST | CRITICAL |
+| 4 | Password Reset Confirmation | `/api/email/password-reset-confirmation` | POST | HIGH |
+| 5 | Password Change Confirmation | `/api/email/password-change-confirmation` | POST | HIGH |
+| 6 | MFA Setup Instructions | `/api/email/mfa-setup` | POST | MEDIUM |
+| 7 | MFA Enabled Notification | `/api/email/mfa-enabled` | POST | MEDIUM |
+| 8 | MFA Disabled Warning | `/api/email/mfa-disabled` | POST | MEDIUM |
+| 9 | New Login Alert | `/api/email/new-login-alert` | POST | MEDIUM |
+| 10 | Account Locked Warning | `/api/email/account-locked` | POST | HIGH |
+| 11 | Session Revoked Notification | `/api/email/session-revoked` | POST | MEDIUM |
+| 12 | OAuth Account Created | `/api/email/oauth-account-created` | POST | MEDIUM |
+| 13 | API Key Created | `/api/email/api-key-created` | POST | LOW |
+| 14 | API Key Revoked | `/api/email/api-key-revoked` | POST | LOW |
 
 ---
 
-## Detailed Email Specifications
+## Response Format
+
+All endpoints return the same response format:
+
+```json
+{
+  "success": true,
+  "messageId": "email-provider-message-id",
+  "errorMessage": null
+}
+```
+
+---
+
+## Detailed API Specifications
 
 ### 1. Welcome Email
 
-**Trigger:** User completes registration
-**Endpoint:** `POST /api/v1/auth/register`
-**File:** `app/api/v1/auth.py:185`
+**Endpoint:** `POST /api/email/welcome`
 
-**gRPC Request Payload:**
-```protobuf
-message WelcomeEmailRequest {
-    string email = 1;
-    string full_name = 2;
-    string username = 3;
-    string created_at = 4;  // ISO 8601 timestamp
-    string login_url = 5;
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "username": "johndoe",
+  "createdAt": "2025-01-15T10:30:00Z",
+  "loginUrl": "https://devflowfix.com/login"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/welcome \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "username": "johndoe",
+    "createdAt": "2025-01-15T10:30:00Z",
+    "loginUrl": "https://devflowfix.com/login"
+  }'
 ```
 
 **Email Content:**
@@ -69,19 +96,30 @@ message WelcomeEmailRequest {
 
 ### 2. Email Verification
 
-**Trigger:** User completes registration (combined with welcome or separate)
-**Endpoint:** `POST /api/v1/auth/register`
-**File:** `app/api/v1/auth.py:185`
+**Endpoint:** `POST /api/email/verification`
 
-**gRPC Request Payload:**
-```protobuf
-message EmailVerificationRequest {
-    string email = 1;
-    string full_name = 2;
-    string verification_token = 3;  // JWT token
-    string verification_url = 4;    // {FRONTEND_URL}/verify-email?token={token}
-    int32 expires_in_hours = 5;     // Token validity period
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "verificationToken": "jwt-token-here",
+  "verificationUrl": "https://devflowfix.com/verify-email?token=jwt-token",
+  "expiresInHours": 24
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/verification \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "verificationToken": "jwt-token-here",
+    "verificationUrl": "https://devflowfix.com/verify-email?token=jwt-token",
+    "expiresInHours": 24
+  }'
 ```
 
 **Email Content:**
@@ -92,22 +130,34 @@ message EmailVerificationRequest {
 
 ### 3. Password Reset Link (CRITICAL)
 
-**Trigger:** User requests password reset
-**Endpoint:** `POST /api/v1/auth/password/reset/request`
-**File:** `app/api/v1/auth.py:822`
-**Note:** There's an existing TODO at line 834
+**Endpoint:** `POST /api/email/password-reset-link`
 
-**gRPC Request Payload:**
-```protobuf
-message PasswordResetLinkRequest {
-    string email = 1;
-    string full_name = 2;
-    string reset_token = 3;         // JWT token with 1-hour expiry
-    string reset_url = 4;           // {FRONTEND_URL}/reset-password?token={token}
-    int32 expires_in_minutes = 5;   // 60 minutes
-    string request_ip = 6;          // IP address of requester
-    string request_timestamp = 7;   // ISO 8601 timestamp
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "resetToken": "jwt-reset-token",
+  "resetUrl": "https://devflowfix.com/reset-password?token=jwt-reset-token",
+  "expiresInMinutes": 60,
+  "requestIp": "192.168.1.1",
+  "requestTimestamp": "2025-01-15T10:30:00Z"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-reset-link \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "resetToken": "jwt-reset-token",
+    "resetUrl": "https://devflowfix.com/reset-password?token=jwt-reset-token",
+    "expiresInMinutes": 60,
+    "requestIp": "192.168.1.1",
+    "requestTimestamp": "2025-01-15T10:30:00Z"
+  }'
 ```
 
 **Email Content:**
@@ -118,19 +168,30 @@ message PasswordResetLinkRequest {
 
 ### 4. Password Reset Confirmation
 
-**Trigger:** User successfully resets password with valid token
-**Endpoint:** `POST /api/v1/auth/password/reset/confirm`
-**File:** `app/api/v1/auth.py:848`
+**Endpoint:** `POST /api/email/password-reset-confirmation`
 
-**gRPC Request Payload:**
-```protobuf
-message PasswordResetConfirmationRequest {
-    string email = 1;
-    string full_name = 2;
-    string reset_timestamp = 3;     // ISO 8601 timestamp
-    string reset_ip = 4;            // IP address
-    string login_url = 5;
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "resetTimestamp": "2025-01-15T10:30:00Z",
+  "resetIp": "192.168.1.1",
+  "loginUrl": "https://devflowfix.com/login"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-reset-confirmation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "resetTimestamp": "2025-01-15T10:30:00Z",
+    "resetIp": "192.168.1.1",
+    "loginUrl": "https://devflowfix.com/login"
+  }'
 ```
 
 **Email Content:**
@@ -141,21 +202,32 @@ message PasswordResetConfirmationRequest {
 
 ### 5. Password Change Confirmation
 
-**Trigger:** Authenticated user changes their password
-**Endpoint:** `POST /api/v1/auth/password/change`
-**File:** `app/api/v1/auth.py:779`
-**Note:** All sessions are revoked after password change (lines 950-958)
+**Endpoint:** `POST /api/email/password-change-confirmation`
 
-**gRPC Request Payload:**
-```protobuf
-message PasswordChangeConfirmationRequest {
-    string email = 1;
-    string full_name = 2;
-    string change_timestamp = 3;    // ISO 8601 timestamp
-    string change_ip = 4;           // IP address
-    string user_agent = 5;          // Browser/device info
-    bool sessions_revoked = 6;      // Always true - all sessions are revoked
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "changeTimestamp": "2025-01-15T10:30:00Z",
+  "changeIp": "192.168.1.1",
+  "userAgent": "Mozilla/5.0 Chrome/120",
+  "sessionsRevoked": true
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-change-confirmation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "changeTimestamp": "2025-01-15T10:30:00Z",
+    "changeIp": "192.168.1.1",
+    "userAgent": "Mozilla/5.0 Chrome/120",
+    "sessionsRevoked": true
+  }'
 ```
 
 **Email Content:**
@@ -166,19 +238,30 @@ message PasswordChangeConfirmationRequest {
 
 ### 6. MFA Setup Instructions
 
-**Trigger:** User initiates MFA setup
-**Endpoint:** `POST /api/v1/auth/mfa/setup`
-**File:** `app/api/v1/auth.py:880`
+**Endpoint:** `POST /api/email/mfa-setup`
 
-**gRPC Request Payload:**
-```protobuf
-message MfaSetupRequest {
-    string email = 1;
-    string full_name = 2;
-    string secret_key = 3;              // TOTP secret (also shown in UI)
-    repeated string backup_codes = 4;   // Recovery codes
-    string setup_timestamp = 5;         // ISO 8601 timestamp
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "secretKey": "JBSWY3DPEHPK3PXP",
+  "backupCodes": ["ABC123", "DEF456", "GHI789", "JKL012"],
+  "setupTimestamp": "2025-01-15T10:30:00Z"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-setup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "secretKey": "JBSWY3DPEHPK3PXP",
+    "backupCodes": ["ABC123", "DEF456", "GHI789", "JKL012"],
+    "setupTimestamp": "2025-01-15T10:30:00Z"
+  }'
 ```
 
 **Email Content:**
@@ -189,18 +272,28 @@ message MfaSetupRequest {
 
 ### 7. MFA Enabled Notification
 
-**Trigger:** User successfully enables MFA
-**Endpoint:** `POST /api/v1/auth/mfa/enable`
-**File:** `app/api/v1/auth.py:913`
+**Endpoint:** `POST /api/email/mfa-enabled`
 
-**gRPC Request Payload:**
-```protobuf
-message MfaEnabledRequest {
-    string email = 1;
-    string full_name = 2;
-    string enabled_timestamp = 3;   // ISO 8601 timestamp
-    string enabled_ip = 4;          // IP address
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "enabledTimestamp": "2025-01-15T10:30:00Z",
+  "enabledIp": "192.168.1.1"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-enabled \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "enabledTimestamp": "2025-01-15T10:30:00Z",
+    "enabledIp": "192.168.1.1"
+  }'
 ```
 
 **Email Content:**
@@ -211,19 +304,30 @@ message MfaEnabledRequest {
 
 ### 8. MFA Disabled Warning
 
-**Trigger:** User disables MFA
-**Endpoint:** `POST /api/v1/auth/mfa/disable`
-**File:** `app/api/v1/auth.py:952`
+**Endpoint:** `POST /api/email/mfa-disabled`
 
-**gRPC Request Payload:**
-```protobuf
-message MfaDisabledRequest {
-    string email = 1;
-    string full_name = 2;
-    string disabled_timestamp = 3;  // ISO 8601 timestamp
-    string disabled_ip = 4;         // IP address
-    string user_agent = 5;          // Browser/device info
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "disabledTimestamp": "2025-01-15T10:30:00Z",
+  "disabledIp": "192.168.1.1",
+  "userAgent": "Mozilla/5.0 Chrome/120"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-disabled \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "disabledTimestamp": "2025-01-15T10:30:00Z",
+    "disabledIp": "192.168.1.1",
+    "userAgent": "Mozilla/5.0 Chrome/120"
+  }'
 ```
 
 **Email Content:**
@@ -234,48 +338,74 @@ message MfaDisabledRequest {
 
 ### 9. New Login Alert
 
-**Trigger:** Successful login (especially from new device/location)
-**Endpoint:** `POST /api/v1/auth/login`
-**File:** `app/api/v1/auth.py:399`
-**Note:** Device fingerprint tracking exists at line 419
+**Endpoint:** `POST /api/email/new-login-alert`
 
-**gRPC Request Payload:**
-```protobuf
-message NewLoginAlertRequest {
-    string email = 1;
-    string full_name = 2;
-    string login_timestamp = 3;     // ISO 8601 timestamp
-    string login_ip = 4;            // IP address
-    string user_agent = 5;          // Browser/device info
-    string device_fingerprint = 6;  // Device identifier
-    string approximate_location = 7; // City/Country (from IP)
-    bool is_new_device = 8;         // First time from this device
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "loginTimestamp": "2025-01-15T10:30:00Z",
+  "loginIp": "192.168.1.100",
+  "userAgent": "Mozilla/5.0 Chrome/120",
+  "deviceFingerprint": "abc123fingerprint",
+  "approximateLocation": "New York, US",
+  "isNewDevice": true
 }
 ```
 
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/new-login-alert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "loginTimestamp": "2025-01-15T10:30:00Z",
+    "loginIp": "192.168.1.100",
+    "userAgent": "Mozilla/5.0 Chrome/120",
+    "deviceFingerprint": "abc123fingerprint",
+    "approximateLocation": "New York, US",
+    "isNewDevice": true
+  }'
+```
+
 **Email Content:**
-- Subject: "New Login to Your Account"
+- Subject: "New Login to Your Account" (or "New Device Login" if isNewDevice=true)
 - Body: Login details, location, device info, "wasn't me" instructions
 
 ---
 
 ### 10. Account Locked Warning
 
-**Trigger:** Account locked after failed login attempts
-**Endpoint:** `POST /api/v1/auth/login` (on failure)
-**File:** `app/api/v1/auth.py:374-377`
+**Endpoint:** `POST /api/email/account-locked`
 
-**gRPC Request Payload:**
-```protobuf
-message AccountLockedRequest {
-    string email = 1;
-    string full_name = 2;
-    int32 failed_attempts = 3;          // Number of failed attempts
-    string locked_timestamp = 4;         // ISO 8601 timestamp
-    int32 lockout_duration_minutes = 5;  // From LOCKOUT_DURATION_MINUTES config
-    string unlock_timestamp = 6;         // When account will be unlocked
-    string last_attempt_ip = 7;          // IP of last failed attempt
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "failedAttempts": 5,
+  "lockedTimestamp": "2025-01-15T10:30:00Z",
+  "lockoutDurationMinutes": 30,
+  "unlockTimestamp": "2025-01-15T11:00:00Z",
+  "lastAttemptIp": "192.168.1.50"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/account-locked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "failedAttempts": 5,
+    "lockedTimestamp": "2025-01-15T10:30:00Z",
+    "lockoutDurationMinutes": 30,
+    "unlockTimestamp": "2025-01-15T11:00:00Z",
+    "lastAttemptIp": "192.168.1.50"
+  }'
 ```
 
 **Email Content:**
@@ -286,21 +416,34 @@ message AccountLockedRequest {
 
 ### 11. Session Revoked Notification
 
-**Trigger:** User manually revokes a session
-**Endpoint:** `POST /api/v1/auth/sessions/revoke`
-**File:** `app/api/v1/auth.py:1030`
+**Endpoint:** `POST /api/email/session-revoked`
 
-**gRPC Request Payload:**
-```protobuf
-message SessionRevokedRequest {
-    string email = 1;
-    string full_name = 2;
-    string revoked_session_id = 3;      // Session that was revoked
-    string revoked_device_info = 4;     // Device/browser of revoked session
-    string revoked_ip = 5;              // IP of revoked session
-    string revocation_timestamp = 6;    // ISO 8601 timestamp
-    string revoked_by_ip = 7;           // IP of user who revoked
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "revokedSessionId": "session-id-123",
+  "revokedDeviceInfo": "Chrome on Windows",
+  "revokedIp": "192.168.1.100",
+  "revocationTimestamp": "2025-01-15T10:30:00Z",
+  "revokedByIp": "192.168.1.1"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/session-revoked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "revokedSessionId": "session-id-123",
+    "revokedDeviceInfo": "Chrome on Windows",
+    "revokedIp": "192.168.1.100",
+    "revocationTimestamp": "2025-01-15T10:30:00Z",
+    "revokedByIp": "192.168.1.1"
+  }'
 ```
 
 **Email Content:**
@@ -311,21 +454,32 @@ message SessionRevokedRequest {
 
 ### 12. OAuth Account Created
 
-**Trigger:** New user created via OAuth (Google/GitHub)
-**Endpoints:**
-- `POST /api/v1/auth/oauth/google` (auth.py:1131)
-- `POST /api/v1/auth/oauth/github` (auth.py:1262)
+**Endpoint:** `POST /api/email/oauth-account-created`
 
-**gRPC Request Payload:**
-```protobuf
-message OAuthAccountCreatedRequest {
-    string email = 1;
-    string full_name = 2;
-    string oauth_provider = 3;          // "google" or "github"
-    string oauth_email = 4;             // Email from OAuth provider
-    string created_timestamp = 5;       // ISO 8601 timestamp
-    string login_url = 6;
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "oAuthProvider": "google",
+  "oAuthEmail": "johndoe@gmail.com",
+  "createdTimestamp": "2025-01-15T10:30:00Z",
+  "loginUrl": "https://devflowfix.com/login"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/oauth-account-created \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "oAuthProvider": "google",
+    "oAuthEmail": "johndoe@gmail.com",
+    "createdTimestamp": "2025-01-15T10:30:00Z",
+    "loginUrl": "https://devflowfix.com/login"
+  }'
 ```
 
 **Email Content:**
@@ -336,20 +490,32 @@ message OAuthAccountCreatedRequest {
 
 ### 13. API Key Created
 
-**Trigger:** User creates new API key
-**Endpoint:** `POST /api/v1/auth/api-key`
-**File:** `app/api/v1/auth.py:1074`
+**Endpoint:** `POST /api/email/api-key-created`
 
-**gRPC Request Payload:**
-```protobuf
-message ApiKeyCreatedRequest {
-    string email = 1;
-    string full_name = 2;
-    string key_prefix = 3;              // First few chars for identification
-    string key_name = 4;                // User-provided name for the key
-    string created_timestamp = 5;       // ISO 8601 timestamp
-    string created_ip = 6;              // IP address
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "keyPrefix": "dff_abc",
+  "keyName": "Production API Key",
+  "createdTimestamp": "2025-01-15T10:30:00Z",
+  "createdIp": "192.168.1.1"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/api-key-created \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "keyPrefix": "dff_abc",
+    "keyName": "Production API Key",
+    "createdTimestamp": "2025-01-15T10:30:00Z",
+    "createdIp": "192.168.1.1"
+  }'
 ```
 
 **Email Content:**
@@ -360,66 +526,37 @@ message ApiKeyCreatedRequest {
 
 ### 14. API Key Revoked
 
-**Trigger:** User revokes an API key
-**Endpoint:** `DELETE /api/v1/auth/api-key`
-**File:** `app/api/v1/auth.py:1103`
+**Endpoint:** `POST /api/email/api-key-revoked`
 
-**gRPC Request Payload:**
-```protobuf
-message ApiKeyRevokedRequest {
-    string email = 1;
-    string full_name = 2;
-    string key_prefix = 3;              // First few chars for identification
-    string key_name = 4;                // User-provided name for the key
-    string revoked_timestamp = 5;       // ISO 8601 timestamp
-    string revoked_ip = 6;              // IP address
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "fullName": "John Doe",
+  "keyPrefix": "dff_abc",
+  "keyName": "Production API Key",
+  "revokedTimestamp": "2025-01-15T10:30:00Z",
+  "revokedIp": "192.168.1.1"
 }
+```
+
+**cURL:**
+```bash
+curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/api-key-revoked \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "fullName": "John Doe",
+    "keyPrefix": "dff_abc",
+    "keyName": "Production API Key",
+    "revokedTimestamp": "2025-01-15T10:30:00Z",
+    "revokedIp": "192.168.1.1"
+  }'
 ```
 
 **Email Content:**
 - Subject: "API Key Revoked"
 - Body: Key revoked confirmation, affected services warning
-
----
-
-## gRPC Service Definition
-
-```protobuf
-syntax = "proto3";
-
-package devflowfix.email;
-
-service EmailService {
-    // Authentication Emails
-    rpc SendWelcomeEmail(WelcomeEmailRequest) returns (EmailResponse);
-    rpc SendEmailVerification(EmailVerificationRequest) returns (EmailResponse);
-    rpc SendPasswordResetLink(PasswordResetLinkRequest) returns (EmailResponse);
-    rpc SendPasswordResetConfirmation(PasswordResetConfirmationRequest) returns (EmailResponse);
-    rpc SendPasswordChangeConfirmation(PasswordChangeConfirmationRequest) returns (EmailResponse);
-
-    // MFA Emails
-    rpc SendMfaSetupInstructions(MfaSetupRequest) returns (EmailResponse);
-    rpc SendMfaEnabledNotification(MfaEnabledRequest) returns (EmailResponse);
-    rpc SendMfaDisabledWarning(MfaDisabledRequest) returns (EmailResponse);
-
-    // Security Alerts
-    rpc SendNewLoginAlert(NewLoginAlertRequest) returns (EmailResponse);
-    rpc SendAccountLockedWarning(AccountLockedRequest) returns (EmailResponse);
-    rpc SendSessionRevokedNotification(SessionRevokedRequest) returns (EmailResponse);
-
-    // Account Emails
-    rpc SendOAuthAccountCreated(OAuthAccountCreatedRequest) returns (EmailResponse);
-    rpc SendApiKeyCreated(ApiKeyCreatedRequest) returns (EmailResponse);
-    rpc SendApiKeyRevoked(ApiKeyRevokedRequest) returns (EmailResponse);
-}
-
-message EmailResponse {
-    bool success = 1;
-    string message_id = 2;          // Email provider's message ID
-    string error_message = 3;       // Error details if failed
-    int32 retry_after_seconds = 4;  // If rate limited
-}
-```
 
 ---
 
@@ -446,76 +583,60 @@ message EmailResponse {
 
 ---
 
-## Integration Points in Python Code
-
-For each email, you'll need to call the gRPC service. Example integration:
+## Integration Example (Python/FastAPI)
 
 ```python
-# In app/api/v1/auth.py - Password Reset Request endpoint (line 834)
+import httpx
+from datetime import datetime
 
-# Replace the TODO comment with:
-from app.adapters.email_grpc import email_service_stub
+EMAIL_SERVICE_URL = "https://devflowfix-mail-service.azurewebsites.net"
 
-async def request_password_reset(request: PasswordResetRequest, db: Session):
-    # ... existing code ...
-
-    # After generating reset_token:
-    try:
-        await email_service_stub.SendPasswordResetLink(
-            PasswordResetLinkRequest(
-                email=user.email,
-                full_name=user.full_name,
-                reset_token=reset_token,
-                reset_url=f"{settings.FRONTEND_URL}/reset-password?token={reset_token}",
-                expires_in_minutes=60,
-                request_ip=request.client.host,
-                request_timestamp=datetime.utcnow().isoformat()
-            )
+async def send_welcome_email(email: str, full_name: str, username: str, login_url: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{EMAIL_SERVICE_URL}/api/email/welcome",
+            json={
+                "email": email,
+                "fullName": full_name,
+                "username": username,
+                "createdAt": datetime.utcnow().isoformat() + "Z",
+                "loginUrl": login_url
+            }
         )
-    except Exception as e:
-        logger.error(f"Failed to send password reset email: {e}")
-        # Don't fail the request - log and continue
+        return response.json()
 
-    # ... rest of code ...
+async def send_password_reset_link(
+    email: str,
+    full_name: str,
+    reset_token: str,
+    reset_url: str,
+    request_ip: str
+):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{EMAIL_SERVICE_URL}/api/email/password-reset-link",
+            json={
+                "email": email,
+                "fullName": full_name,
+                "resetToken": reset_token,
+                "resetUrl": reset_url,
+                "expiresInMinutes": 60,
+                "requestIp": request_ip,
+                "requestTimestamp": datetime.utcnow().isoformat() + "Z"
+            }
+        )
+        return response.json()
 ```
 
 ---
 
-## Configuration Requirements
+## Configuration
 
-Your .NET Email Microservice will need these environment variables:
+The Email Service uses Azure Communication Services and requires these environment variables:
 
 ```env
-# gRPC Server
-GRPC_PORT=50051
-GRPC_HOST=0.0.0.0
-
-# Email Provider (choose one)
-EMAIL_PROVIDER=sendgrid  # or "ses", "smtp"
-
-# SendGrid
-SENDGRID_API_KEY=your_api_key
-
-# AWS SES
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
-AWS_REGION=us-east-1
-
-# SMTP
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=your_username
-SMTP_PASSWORD=your_password
-SMTP_USE_TLS=true
-
-# Email Settings
-FROM_EMAIL=noreply@devflowfix.com
-FROM_NAME=DevFlowFix
-FRONTEND_URL=https://app.devflowfix.com
-
-# Rate Limiting
-MAX_EMAILS_PER_MINUTE=100
-MAX_EMAILS_PER_USER_PER_HOUR=20
+AzureCommunicationServices__ConnectionString=endpoint=https://your-resource.communication.azure.com/;accesskey=your-key
+AzureCommunicationServices__SenderAddress=DoNotReply@yourdomain.com
 ```
 
 ---
@@ -525,7 +646,7 @@ MAX_EMAILS_PER_USER_PER_HOUR=20
 1. **Security**: Never log full email content or tokens in production
 2. **Retry Logic**: Implement exponential backoff for failed emails
 3. **Rate Limiting**: Prevent abuse by limiting emails per user
-4. **Templates**: Use HTML email templates with plain text fallback
+4. **Templates**: HTML email templates with plain text fallback (using Handlebars.NET)
 5. **Tracking**: Consider adding email open/click tracking for analytics
 6. **Unsubscribe**: Add unsubscribe links for non-transactional emails
 
