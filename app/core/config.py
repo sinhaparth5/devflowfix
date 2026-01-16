@@ -421,6 +421,24 @@ class Settings(BaseSettings):
         description="Base URL for webhooks (e.g., https://api.devflowfix.com)"
     )
 
+    # Email service settings
+    email_service_url: str = Field(
+        default="https://devflowfix-mail-service.azurewebsites.net",
+        description="Base URL for the email microservice"
+    )
+
+    email_service_timeout: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="Email service request timeout in seconds"
+    )
+
+    frontend_url: str = Field(
+        default="https://devflowfix.com",
+        description="Frontend URL for email links (login, verification, etc.)"
+    )
+
     # Slack settings
     slack_token: str = Field(
         default="",
