@@ -1,52 +1,15 @@
-# Email Service Integration Documentation
+# Email Service Integration
 
-This document outlines all email notification requirements for integration with the .NET Email Microservice via REST API.
+## Service Details
 
-**Base URL:** `https://devflowfix-mail-service.azurewebsites.net`
+| Property | Value |
+|----------|-------|
+| Base URL | `https://devflowfix-mail-service.azurewebsites.net` |
+| Protocol | REST API (POST) |
+| Content-Type | `application/json` |
+| Provider | Azure Communication Services |
 
----
-
-## Architecture Overview
-
-```
-┌─────────────────────┐       REST API        ┌─────────────────────┐
-│   DevFlowFix API    │ ───────────────────── │  .NET Email Service │
-│   (FastAPI/Python)  │                       │    (Microservice)   │
-└─────────────────────┘                       └─────────────────────┘
-                                                        │
-                                                        ▼
-                                              ┌─────────────────────┐
-                                              │   Email Provider    │
-                                              │ (Azure Comm Svc)    │
-                                              └─────────────────────┘
-```
-
----
-
-## API Endpoints Summary
-
-| # | Email Type | API Endpoint | Method | Priority |
-|---|------------|--------------|--------|----------|
-| 1 | Welcome Email | `/api/email/welcome` | POST | HIGH |
-| 2 | Email Verification | `/api/email/verification` | POST | HIGH |
-| 3 | Password Reset Link | `/api/email/password-reset-link` | POST | CRITICAL |
-| 4 | Password Reset Confirmation | `/api/email/password-reset-confirmation` | POST | HIGH |
-| 5 | Password Change Confirmation | `/api/email/password-change-confirmation` | POST | HIGH |
-| 6 | MFA Setup Instructions | `/api/email/mfa-setup` | POST | MEDIUM |
-| 7 | MFA Enabled Notification | `/api/email/mfa-enabled` | POST | MEDIUM |
-| 8 | MFA Disabled Warning | `/api/email/mfa-disabled` | POST | MEDIUM |
-| 9 | New Login Alert | `/api/email/new-login-alert` | POST | MEDIUM |
-| 10 | Account Locked Warning | `/api/email/account-locked` | POST | HIGH |
-| 11 | Session Revoked Notification | `/api/email/session-revoked` | POST | MEDIUM |
-| 12 | OAuth Account Created | `/api/email/oauth-account-created` | POST | MEDIUM |
-| 13 | API Key Created | `/api/email/api-key-created` | POST | LOW |
-| 14 | API Key Revoked | `/api/email/api-key-revoked` | POST | LOW |
-
----
-
-## Response Format
-
-All endpoints return the same response format:
+### Response Format
 
 ```json
 {
@@ -58,598 +21,196 @@ All endpoints return the same response format:
 
 ---
 
-## Detailed API Specifications
+## Email Templates
 
 ### 1. Welcome Email
+**Endpoint:** `/api/email/welcome`
 
-**Endpoint:** `POST /api/email/welcome`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "username": "johndoe",
-  "createdAt": "2025-01-15T10:30:00Z",
-  "loginUrl": "https://devflowfix.com/login"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/welcome \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "username": "johndoe",
-    "createdAt": "2025-01-15T10:30:00Z",
-    "loginUrl": "https://devflowfix.com/login"
-  }'
-```
-
-**Email Content:**
-- Subject: "Welcome to DevFlowFix!"
-- Body: Greeting, platform overview, getting started guide, login link
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| username | string | User's username |
+| createdAt | string | ISO 8601 timestamp |
+| loginUrl | string | Login page URL |
 
 ---
 
 ### 2. Email Verification
+**Endpoint:** `/api/email/verification`
 
-**Endpoint:** `POST /api/email/verification`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "verificationToken": "jwt-token-here",
-  "verificationUrl": "https://devflowfix.com/verify-email?token=jwt-token",
-  "expiresInHours": 24
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/verification \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "verificationToken": "jwt-token-here",
-    "verificationUrl": "https://devflowfix.com/verify-email?token=jwt-token",
-    "expiresInHours": 24
-  }'
-```
-
-**Email Content:**
-- Subject: "Verify Your Email Address"
-- Body: Verification link, expiration notice, instructions
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| verificationToken | string | JWT verification token |
+| verificationUrl | string | Full verification URL with token |
+| expiresInHours | int | Token expiration hours |
 
 ---
 
-### 3. Password Reset Link (CRITICAL)
+### 3. Password Reset Link
+**Endpoint:** `/api/email/password-reset-link`
 
-**Endpoint:** `POST /api/email/password-reset-link`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "resetToken": "jwt-reset-token",
-  "resetUrl": "https://devflowfix.com/reset-password?token=jwt-reset-token",
-  "expiresInMinutes": 60,
-  "requestIp": "192.168.1.1",
-  "requestTimestamp": "2025-01-15T10:30:00Z"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-reset-link \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "resetToken": "jwt-reset-token",
-    "resetUrl": "https://devflowfix.com/reset-password?token=jwt-reset-token",
-    "expiresInMinutes": 60,
-    "requestIp": "192.168.1.1",
-    "requestTimestamp": "2025-01-15T10:30:00Z"
-  }'
-```
-
-**Email Content:**
-- Subject: "Reset Your Password"
-- Body: Reset link, expiration warning (1 hour), security notice if not requested
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| resetToken | string | JWT reset token |
+| resetUrl | string | Full reset URL with token |
+| expiresInMinutes | int | Token expiration minutes |
+| requestIp | string | IP that requested reset |
+| requestTimestamp | string | ISO 8601 timestamp |
 
 ---
 
 ### 4. Password Reset Confirmation
+**Endpoint:** `/api/email/password-reset-confirmation`
 
-**Endpoint:** `POST /api/email/password-reset-confirmation`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "resetTimestamp": "2025-01-15T10:30:00Z",
-  "resetIp": "192.168.1.1",
-  "loginUrl": "https://devflowfix.com/login"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-reset-confirmation \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "resetTimestamp": "2025-01-15T10:30:00Z",
-    "resetIp": "192.168.1.1",
-    "loginUrl": "https://devflowfix.com/login"
-  }'
-```
-
-**Email Content:**
-- Subject: "Your Password Has Been Reset"
-- Body: Confirmation, timestamp, security warning if not user, contact support link
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| resetTimestamp | string | ISO 8601 timestamp |
+| resetIp | string | IP where reset occurred |
+| loginUrl | string | Login page URL |
 
 ---
 
 ### 5. Password Change Confirmation
+**Endpoint:** `/api/email/password-change-confirmation`
 
-**Endpoint:** `POST /api/email/password-change-confirmation`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "changeTimestamp": "2025-01-15T10:30:00Z",
-  "changeIp": "192.168.1.1",
-  "userAgent": "Mozilla/5.0 Chrome/120",
-  "sessionsRevoked": true
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/password-change-confirmation \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "changeTimestamp": "2025-01-15T10:30:00Z",
-    "changeIp": "192.168.1.1",
-    "userAgent": "Mozilla/5.0 Chrome/120",
-    "sessionsRevoked": true
-  }'
-```
-
-**Email Content:**
-- Subject: "Your Password Has Been Changed"
-- Body: Confirmation, all sessions logged out notice, security warning
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| changeTimestamp | string | ISO 8601 timestamp |
+| changeIp | string | IP where change occurred |
+| userAgent | string | Browser/client info |
+| sessionsRevoked | bool | Whether sessions were revoked |
 
 ---
 
 ### 6. MFA Setup Instructions
+**Endpoint:** `/api/email/mfa-setup`
 
-**Endpoint:** `POST /api/email/mfa-setup`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "secretKey": "JBSWY3DPEHPK3PXP",
-  "backupCodes": ["ABC123", "DEF456", "GHI789", "JKL012"],
-  "setupTimestamp": "2025-01-15T10:30:00Z"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-setup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "secretKey": "JBSWY3DPEHPK3PXP",
-    "backupCodes": ["ABC123", "DEF456", "GHI789", "JKL012"],
-    "setupTimestamp": "2025-01-15T10:30:00Z"
-  }'
-```
-
-**Email Content:**
-- Subject: "MFA Setup Instructions"
-- Body: Secret key, backup codes (important!), instructions to save securely
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| secretKey | string | TOTP secret key |
+| backupCodes | string[] | Array of backup codes |
+| setupTimestamp | string | ISO 8601 timestamp |
 
 ---
 
 ### 7. MFA Enabled Notification
+**Endpoint:** `/api/email/mfa-enabled`
 
-**Endpoint:** `POST /api/email/mfa-enabled`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "enabledTimestamp": "2025-01-15T10:30:00Z",
-  "enabledIp": "192.168.1.1"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-enabled \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "enabledTimestamp": "2025-01-15T10:30:00Z",
-    "enabledIp": "192.168.1.1"
-  }'
-```
-
-**Email Content:**
-- Subject: "Two-Factor Authentication Enabled"
-- Body: Confirmation, next login requires MFA code, recovery options
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| enabledTimestamp | string | ISO 8601 timestamp |
+| enabledIp | string | IP where MFA was enabled |
 
 ---
 
 ### 8. MFA Disabled Warning
+**Endpoint:** `/api/email/mfa-disabled`
 
-**Endpoint:** `POST /api/email/mfa-disabled`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "disabledTimestamp": "2025-01-15T10:30:00Z",
-  "disabledIp": "192.168.1.1",
-  "userAgent": "Mozilla/5.0 Chrome/120"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/mfa-disabled \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "disabledTimestamp": "2025-01-15T10:30:00Z",
-    "disabledIp": "192.168.1.1",
-    "userAgent": "Mozilla/5.0 Chrome/120"
-  }'
-```
-
-**Email Content:**
-- Subject: "Two-Factor Authentication Disabled - Security Alert"
-- Body: Warning about reduced security, timestamp, re-enable instructions
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| disabledTimestamp | string | ISO 8601 timestamp |
+| disabledIp | string | IP where MFA was disabled |
+| userAgent | string | Browser/client info |
 
 ---
 
 ### 9. New Login Alert
+**Endpoint:** `/api/email/new-login-alert`
 
-**Endpoint:** `POST /api/email/new-login-alert`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "loginTimestamp": "2025-01-15T10:30:00Z",
-  "loginIp": "192.168.1.100",
-  "userAgent": "Mozilla/5.0 Chrome/120",
-  "deviceFingerprint": "abc123fingerprint",
-  "approximateLocation": "New York, US",
-  "isNewDevice": true
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/new-login-alert \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "loginTimestamp": "2025-01-15T10:30:00Z",
-    "loginIp": "192.168.1.100",
-    "userAgent": "Mozilla/5.0 Chrome/120",
-    "deviceFingerprint": "abc123fingerprint",
-    "approximateLocation": "New York, US",
-    "isNewDevice": true
-  }'
-```
-
-**Email Content:**
-- Subject: "New Login to Your Account" (or "New Device Login" if isNewDevice=true)
-- Body: Login details, location, device info, "wasn't me" instructions
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| loginTimestamp | string | ISO 8601 timestamp |
+| loginIp | string | IP of the login |
+| userAgent | string | Browser/client info |
+| deviceFingerprint | string | Device fingerprint |
+| approximateLocation | string | Location (e.g., "New York, US") |
+| isNewDevice | bool | Whether device is new |
 
 ---
 
 ### 10. Account Locked Warning
+**Endpoint:** `/api/email/account-locked`
 
-**Endpoint:** `POST /api/email/account-locked`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "failedAttempts": 5,
-  "lockedTimestamp": "2025-01-15T10:30:00Z",
-  "lockoutDurationMinutes": 30,
-  "unlockTimestamp": "2025-01-15T11:00:00Z",
-  "lastAttemptIp": "192.168.1.50"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/account-locked \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "failedAttempts": 5,
-    "lockedTimestamp": "2025-01-15T10:30:00Z",
-    "lockoutDurationMinutes": 30,
-    "unlockTimestamp": "2025-01-15T11:00:00Z",
-    "lastAttemptIp": "192.168.1.50"
-  }'
-```
-
-**Email Content:**
-- Subject: "Account Temporarily Locked - Security Alert"
-- Body: Lockout reason, duration, unlock time, password reset suggestion
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| failedAttempts | int | Number of failed attempts |
+| lockedTimestamp | string | ISO 8601 timestamp |
+| lockoutDurationMinutes | int | Lockout duration |
+| unlockTimestamp | string | When account unlocks |
+| lastAttemptIp | string | IP of last failed attempt |
 
 ---
 
 ### 11. Session Revoked Notification
+**Endpoint:** `/api/email/session-revoked`
 
-**Endpoint:** `POST /api/email/session-revoked`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "revokedSessionId": "session-id-123",
-  "revokedDeviceInfo": "Chrome on Windows",
-  "revokedIp": "192.168.1.100",
-  "revocationTimestamp": "2025-01-15T10:30:00Z",
-  "revokedByIp": "192.168.1.1"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/session-revoked \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "revokedSessionId": "session-id-123",
-    "revokedDeviceInfo": "Chrome on Windows",
-    "revokedIp": "192.168.1.100",
-    "revocationTimestamp": "2025-01-15T10:30:00Z",
-    "revokedByIp": "192.168.1.1"
-  }'
-```
-
-**Email Content:**
-- Subject: "Session Revoked"
-- Body: Which session was ended, device info, security notice
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| revokedSessionId | string | ID of revoked session |
+| revokedDeviceInfo | string | Device info of session |
+| revokedIp | string | IP of revoked session |
+| revocationTimestamp | string | ISO 8601 timestamp |
+| revokedByIp | string | IP that revoked session |
 
 ---
 
 ### 12. OAuth Account Created
+**Endpoint:** `/api/email/oauth-account-created`
 
-**Endpoint:** `POST /api/email/oauth-account-created`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "oAuthProvider": "google",
-  "oAuthEmail": "johndoe@gmail.com",
-  "createdTimestamp": "2025-01-15T10:30:00Z",
-  "loginUrl": "https://devflowfix.com/login"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/oauth-account-created \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "oAuthProvider": "google",
-    "oAuthEmail": "johndoe@gmail.com",
-    "createdTimestamp": "2025-01-15T10:30:00Z",
-    "loginUrl": "https://devflowfix.com/login"
-  }'
-```
-
-**Email Content:**
-- Subject: "Welcome to DevFlowFix!"
-- Body: Account created via OAuth, linked provider info, getting started
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| oAuthProvider | string | Provider (google, github) |
+| oAuthEmail | string | Email from OAuth provider |
+| createdTimestamp | string | ISO 8601 timestamp |
+| loginUrl | string | Login page URL |
 
 ---
 
 ### 13. API Key Created
+**Endpoint:** `/api/email/api-key-created`
 
-**Endpoint:** `POST /api/email/api-key-created`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "keyPrefix": "dff_abc",
-  "keyName": "Production API Key",
-  "createdTimestamp": "2025-01-15T10:30:00Z",
-  "createdIp": "192.168.1.1"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/api-key-created \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "keyPrefix": "dff_abc",
-    "keyName": "Production API Key",
-    "createdTimestamp": "2025-01-15T10:30:00Z",
-    "createdIp": "192.168.1.1"
-  }'
-```
-
-**Email Content:**
-- Subject: "New API Key Created"
-- Body: Key created confirmation, key prefix, security reminder
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| keyPrefix | string | API key prefix (e.g., "dff_abc") |
+| keyName | string | Name of the API key |
+| createdTimestamp | string | ISO 8601 timestamp |
+| createdIp | string | IP where key was created |
 
 ---
 
 ### 14. API Key Revoked
+**Endpoint:** `/api/email/api-key-revoked`
 
-**Endpoint:** `POST /api/email/api-key-revoked`
-
-**Request:**
-```json
-{
-  "email": "user@example.com",
-  "fullName": "John Doe",
-  "keyPrefix": "dff_abc",
-  "keyName": "Production API Key",
-  "revokedTimestamp": "2025-01-15T10:30:00Z",
-  "revokedIp": "192.168.1.1"
-}
-```
-
-**cURL:**
-```bash
-curl -X POST https://devflowfix-mail-service.azurewebsites.net/api/email/api-key-revoked \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "fullName": "John Doe",
-    "keyPrefix": "dff_abc",
-    "keyName": "Production API Key",
-    "revokedTimestamp": "2025-01-15T10:30:00Z",
-    "revokedIp": "192.168.1.1"
-  }'
-```
-
-**Email Content:**
-- Subject: "API Key Revoked"
-- Body: Key revoked confirmation, affected services warning
-
----
-
-## Implementation Priority
-
-### Phase 1 - Critical (Must Have)
-1. Password Reset Link - Users cannot recover accounts without this
-2. Welcome Email - First user impression
-3. Email Verification - Account security
-
-### Phase 2 - High Priority
-4. Password Reset Confirmation
-5. Password Change Confirmation
-6. Account Locked Warning
-
-### Phase 3 - Medium Priority
-7. MFA Setup/Enable/Disable notifications
-8. New Login Alert
-9. Session Revoked Notification
-10. OAuth Account Created
-
-### Phase 4 - Low Priority
-11. API Key Created/Revoked
-
----
-
-## Integration Example (Python/FastAPI)
-
-```python
-import httpx
-from datetime import datetime
-
-EMAIL_SERVICE_URL = "https://devflowfix-mail-service.azurewebsites.net"
-
-async def send_welcome_email(email: str, full_name: str, username: str, login_url: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{EMAIL_SERVICE_URL}/api/email/welcome",
-            json={
-                "email": email,
-                "fullName": full_name,
-                "username": username,
-                "createdAt": datetime.utcnow().isoformat() + "Z",
-                "loginUrl": login_url
-            }
-        )
-        return response.json()
-
-async def send_password_reset_link(
-    email: str,
-    full_name: str,
-    reset_token: str,
-    reset_url: str,
-    request_ip: str
-):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{EMAIL_SERVICE_URL}/api/email/password-reset-link",
-            json={
-                "email": email,
-                "fullName": full_name,
-                "resetToken": reset_token,
-                "resetUrl": reset_url,
-                "expiresInMinutes": 60,
-                "requestIp": request_ip,
-                "requestTimestamp": datetime.utcnow().isoformat() + "Z"
-            }
-        )
-        return response.json()
-```
-
----
-
-## Configuration
-
-The Email Service uses Azure Communication Services and requires these environment variables:
-
-```env
-AzureCommunicationServices__ConnectionString=endpoint=https://your-resource.communication.azure.com/;accesskey=your-key
-AzureCommunicationServices__SenderAddress=DoNotReply@yourdomain.com
-```
-
----
-
-## Notes
-
-1. **Security**: Never log full email content or tokens in production
-2. **Retry Logic**: Implement exponential backoff for failed emails
-3. **Rate Limiting**: Prevent abuse by limiting emails per user
-4. **Templates**: HTML email templates with plain text fallback (using Handlebars.NET)
-5. **Tracking**: Consider adding email open/click tracking for analytics
-6. **Unsubscribe**: Add unsubscribe links for non-transactional emails
-
----
-
-*Generated for DevFlowFix Email Microservice Integration*
+| Variable | Type | Description |
+|----------|------|-------------|
+| email | string | Recipient email |
+| fullName | string | User's full name |
+| keyPrefix | string | API key prefix |
+| keyName | string | Name of the API key |
+| revokedTimestamp | string | ISO 8601 timestamp |
+| revokedIp | string | IP where key was revoked |

@@ -893,6 +893,16 @@ class AuthService:
 
         return token
 
+    def get_email_from_reset_token(self, token: str) -> Optional[str]:
+        """Extract email from a password reset token without consuming it."""
+        try:
+            payload = jwt.decode(token, settings.secret_key, algorithms=[JWT_ALGORITHM])
+            if payload.get("type") != "password_reset":
+                return None
+            return payload.get("email")
+        except JWTError:
+            return None
+
     def reset_password(self, token: str, new_password: str) -> bool:
         """Reset password using reset token."""
         try:

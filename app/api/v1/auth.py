@@ -21,6 +21,7 @@ from app.adapters.database.postgres.repositories.users import (
 )
 from app.services.auth import AuthService, AuthenticationError
 from app.services.storage import get_storage_service
+from app.services.email import get_email_service
 from app.core.config import settings
 from app.core.schemas.users import (
     UserCreate,
@@ -250,6 +251,14 @@ async def register(
             email=user.email,
         )
 
+        # Send welcome email
+        email_service = get_email_service()
+        await email_service.send_welcome_email(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            username=user.email.split("@")[0],
+        )
+
         return UserResponse.model_validate(user)
     except AuthenticationError as e:
         logger.info(
@@ -372,6 +381,14 @@ async def register_with_avatar_file(
             email=user.email,
         )
 
+        # Send welcome email
+        email_service = get_email_service()
+        await email_service.send_welcome_email(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            username=user.email.split("@")[0],
+        )
+
         return UserResponse.model_validate(user)
     except AuthenticationError as e:
         logger.info(
@@ -424,7 +441,18 @@ async def login(
             user_id=user.user_id,
             session_id=session_id,
         )
-        
+
+        # Send new login alert email
+        email_service = get_email_service()
+        await email_service.send_new_login_alert(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            login_ip=client_info["ip_address"] or "Unknown",
+            user_agent=client_info["user_agent"] or "Unknown",
+            device_fingerprint=login_data.device_fingerprint if hasattr(login_data, 'device_fingerprint') else None,
+            is_new_device=True,  # Could be enhanced with device tracking
+        )
+
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -440,6 +468,18 @@ async def login(
             error_code=e.error_code,
         )
         if e.error_code == "account_locked":
+            # Send account locked warning email
+            email_service = get_email_service()
+            # Get user to send email
+            user = auth_service.user_repo.get_by_email(login_data.email)
+            if user:
+                await email_service.send_account_locked_warning(
+                    email=user.email,
+                    full_name=user.full_name or user.email.split("@")[0],
+                    failed_attempts=settings.max_failed_login_attempts,
+                    lockout_duration_minutes=settings.account_lockout_duration_minutes,
+                    last_attempt_ip=client_info["ip_address"] or "Unknown",
+                )
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
                 detail=e.message,
@@ -778,26 +818,40 @@ async def update_user_avatar_file(
 )
 async def change_password(
     password_data: PasswordChangeRequest,
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Change password for current user.
-    
+
     All sessions will be revoked after password change.
     """
+    client_info = get_client_info(request)
+
     try:
         auth_service.change_password(
             user_id=current_user["user"].user_id,
             current_password=password_data.current_password,
             new_password=password_data.new_password,
         )
-        
+
         logger.info(
             "password_changed",
             user_id=current_user["user"].user_id,
         )
-        
+
+        # Send password change confirmation email
+        user = current_user["user"]
+        email_service = get_email_service()
+        await email_service.send_password_change_confirmation(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            change_ip=client_info["ip_address"] or "Unknown",
+            user_agent=client_info["user_agent"] or "Unknown",
+            sessions_revoked=True,
+        )
+
         return SuccessResponse(
             success=True,
             message="Password changed successfully. Please login again.",
@@ -821,19 +875,32 @@ async def change_password(
 )
 async def request_password_reset(
     reset_data: PasswordResetRequest,
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Request a password reset email.
-    
+
     Note: For security, always returns success even if email doesn't exist.
     """
+    client_info = get_client_info(request)
     token = auth_service.create_password_reset_token(reset_data.email)
-    
+
     if token:
-        # TODO: Send email with reset link containing token
+        # Get user to get full name for email
+        user = auth_service.user_repo.get_by_email(reset_data.email)
+        if user:
+            # Send password reset link email
+            email_service = get_email_service()
+            await email_service.send_password_reset_link(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                reset_token=token,
+                request_ip=client_info["ip_address"] or "Unknown",
+                expires_in_minutes=60,
+            )
         logger.info("password_reset_token_created", email=reset_data.email)
-    
+
     return SuccessResponse(
         success=True,
         message="If the email exists, a password reset link has been sent.",
@@ -847,14 +914,30 @@ async def request_password_reset(
 )
 async def confirm_password_reset(
     reset_data: PasswordResetConfirm,
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Reset password using the reset token."""
+    client_info = get_client_info(request)
+
     try:
+        # Get user info from token before reset (for email notification)
+        user_email = auth_service.get_email_from_reset_token(reset_data.token)
+        user = auth_service.user_repo.get_by_email(user_email) if user_email else None
+
         auth_service.reset_password(reset_data.token, reset_data.new_password)
-        
+
         logger.info("password_reset_completed")
-        
+
+        # Send password reset confirmation email
+        if user:
+            email_service = get_email_service()
+            await email_service.send_password_reset_confirmation(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                reset_ip=client_info["ip_address"] or "Unknown",
+            )
+
         return SuccessResponse(
             success=True,
             message="Password reset successfully. Please login with your new password.",
@@ -883,12 +966,12 @@ async def setup_mfa(
 ):
     """
     Setup MFA for current user.
-    
+
     Returns:
     - secret: For manual entry in authenticator app
     - qr_code_uri: For QR code generation
     - backup_codes: Save these securely!
-    
+
     After setup, call /mfa/enable with a code to enable MFA.
     """
     if current_user["user"].is_mfa_enabled:
@@ -896,13 +979,25 @@ async def setup_mfa(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="MFA is already enabled",
         )
-    
+
     logger.info(
         "mfa_setup_initiated",
         user_id=current_user["user"].user_id,
     )
-    
-    return auth_service.setup_mfa(current_user["user"].user_id)
+
+    mfa_response = auth_service.setup_mfa(current_user["user"].user_id)
+
+    # Send MFA setup email with secret and backup codes
+    user = current_user["user"]
+    email_service = get_email_service()
+    await email_service.send_mfa_setup_email(
+        email=user.email,
+        full_name=user.full_name or user.email.split("@")[0],
+        secret_key=mfa_response.secret,
+        backup_codes=mfa_response.backup_codes,
+    )
+
+    return mfa_response
 
 
 @router.post(
@@ -912,22 +1007,34 @@ async def setup_mfa(
 )
 async def enable_mfa(
     mfa_data: MFAVerifyRequest,
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Enable MFA by verifying the setup code.
-    
+
     Provide a code from your authenticator app to confirm setup.
     """
+    client_info = get_client_info(request)
+
     try:
         auth_service.enable_mfa(current_user["user"].user_id, mfa_data.code)
-        
+
         logger.info(
             "mfa_enabled",
             user_id=current_user["user"].user_id,
         )
-        
+
+        # Send MFA enabled notification email
+        user = current_user["user"]
+        email_service = get_email_service()
+        await email_service.send_mfa_enabled_notification(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            enabled_ip=client_info["ip_address"] or "Unknown",
+        )
+
         return SuccessResponse(
             success=True,
             message="MFA enabled successfully",
@@ -951,32 +1058,45 @@ async def enable_mfa(
 )
 async def disable_mfa(
     mfa_data: MFADisableRequest,
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Disable MFA for current user.
-    
+
     Requires current password and MFA code for verification.
     """
+    client_info = get_client_info(request)
+
     if not current_user["user"].is_mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="MFA is not enabled",
         )
-    
+
     try:
         auth_service.disable_mfa(
             current_user["user"].user_id,
             mfa_data.password,
             mfa_data.code,
         )
-        
+
         logger.info(
             "mfa_disabled",
             user_id=current_user["user"].user_id,
         )
-        
+
+        # Send MFA disabled warning email
+        user = current_user["user"]
+        email_service = get_email_service()
+        await email_service.send_mfa_disabled_warning(
+            email=user.email,
+            full_name=user.full_name or user.email.split("@")[0],
+            disabled_ip=client_info["ip_address"] or "Unknown",
+            user_agent=client_info["user_agent"] or "Unknown",
+        )
+
         return SuccessResponse(
             success=True,
             message="MFA disabled successfully",
@@ -1029,10 +1149,13 @@ async def list_sessions(
 )
 async def revoke_session(
     revoke_data: RevokeSessionRequest,
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Revoke a specific session."""
+    client_info = get_client_info(request)
+
     # Verify session belongs to user
     session = auth_service.session_repo.get_by_id(revoke_data.session_id)
     if not session or session.user_id != current_user["user"].user_id:
@@ -1040,24 +1163,40 @@ async def revoke_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
         )
-    
+
     if revoke_data.session_id == current_user["session_id"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot revoke current session. Use logout instead.",
         )
-    
+
+    # Capture session info before revoking for email notification
+    revoked_device_info = session.user_agent or "Unknown device"
+    revoked_ip = session.ip_address or "Unknown"
+
     auth_service.session_repo.revoke_session(
         revoke_data.session_id,
         reason=revoke_data.reason or "User revoked",
     )
-    
+
     logger.info(
         "session_revoked",
         user_id=current_user["user"].user_id,
         session_id=revoke_data.session_id,
     )
-    
+
+    # Send session revoked notification email
+    user = current_user["user"]
+    email_service = get_email_service()
+    await email_service.send_session_revoked_notification(
+        email=user.email,
+        full_name=user.full_name or user.email.split("@")[0],
+        revoked_session_id=revoke_data.session_id,
+        revoked_device_info=revoked_device_info,
+        revoked_ip=revoked_ip,
+        revoked_by_ip=client_info["ip_address"] or "Unknown",
+    )
+
     return SuccessResponse(
         success=True,
         message="Session revoked successfully",
@@ -1072,22 +1211,35 @@ async def revoke_session(
     summary="Create API key",
 )
 async def create_api_key(
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
     Create an API key for service authentication.
-    
+
     WARNING: The full API key is shown only once. Save it securely!
     """
+    client_info = get_client_info(request)
     api_key, prefix = auth_service.create_api_key(current_user["user"].user_id)
-    
+
     logger.info(
         "api_key_created",
         user_id=current_user["user"].user_id,
         prefix=prefix,
     )
-    
+
+    # Send API key created notification email
+    user = current_user["user"]
+    email_service = get_email_service()
+    await email_service.send_api_key_created_notification(
+        email=user.email,
+        full_name=user.full_name or user.email.split("@")[0],
+        key_prefix=prefix,
+        key_name="API Key",  # Could be enhanced to accept a name parameter
+        created_ip=client_info["ip_address"] or "Unknown",
+    )
+
     return APIKeyCreateResponse(
         api_key=api_key,
         prefix=prefix,
@@ -1101,17 +1253,34 @@ async def create_api_key(
     summary="Revoke API key",
 )
 async def revoke_api_key(
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Revoke the current API key."""
+    client_info = get_client_info(request)
+
+    # Get API key prefix before revoking for email notification
+    user = current_user["user"]
+    api_key_prefix = user.api_key_prefix if hasattr(user, 'api_key_prefix') else "dff_***"
+
     auth_service.revoke_api_key(current_user["user"].user_id)
-    
+
     logger.info(
         "api_key_revoked",
         user_id=current_user["user"].user_id,
     )
-    
+
+    # Send API key revoked notification email
+    email_service = get_email_service()
+    await email_service.send_api_key_revoked_notification(
+        email=user.email,
+        full_name=user.full_name or user.email.split("@")[0],
+        key_prefix=api_key_prefix,
+        key_name="API Key",
+        revoked_ip=client_info["ip_address"] or "Unknown",
+    )
+
     return SuccessResponse(
         success=True,
         message="API key revoked successfully",
@@ -1211,6 +1380,10 @@ async def oauth_google_login(
 
             user_info = user_info_response.json()
 
+        # Check if user already exists (for determining if this is a new account)
+        existing_user = auth_service.user_repo.get_by_email(user_info["email"])
+        is_new_user = existing_user is None
+
         # Authenticate or create user
         user, access_token, refresh_token, session_id = auth_service.authenticate_oauth(
             provider="google",
@@ -1227,7 +1400,28 @@ async def oauth_google_login(
             "google_oauth_login_success",
             user_id=user.user_id,
             session_id=session_id,
+            is_new_user=is_new_user,
         )
+
+        # Send email notification
+        email_service = get_email_service()
+        if is_new_user:
+            # Send OAuth account created email for new users
+            await email_service.send_oauth_account_created(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                oauth_provider="google",
+                oauth_email=user_info["email"],
+            )
+        else:
+            # Send new login alert for existing users
+            await email_service.send_new_login_alert(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                login_ip=client_info["ip_address"] or "Unknown",
+                user_agent=client_info["user_agent"] or "Unknown",
+                is_new_device=True,
+            )
 
         return LoginResponse(
             access_token=access_token,
@@ -1380,6 +1574,10 @@ async def oauth_github_login(
                     detail="GitHub account must have a verified email address",
                 )
 
+        # Check if user already exists (for determining if this is a new account)
+        existing_user = auth_service.user_repo.get_by_email(email)
+        is_new_user = existing_user is None
+
         # Authenticate or create user
         user, access_token, refresh_token, session_id = auth_service.authenticate_oauth(
             provider="github",
@@ -1396,7 +1594,28 @@ async def oauth_github_login(
             "github_oauth_login_success",
             user_id=user.user_id,
             session_id=session_id,
+            is_new_user=is_new_user,
         )
+
+        # Send email notification
+        email_service = get_email_service()
+        if is_new_user:
+            # Send OAuth account created email for new users
+            await email_service.send_oauth_account_created(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                oauth_provider="github",
+                oauth_email=email,
+            )
+        else:
+            # Send new login alert for existing users
+            await email_service.send_new_login_alert(
+                email=user.email,
+                full_name=user.full_name or user.email.split("@")[0],
+                login_ip=client_info["ip_address"] or "Unknown",
+                user_agent=client_info["user_agent"] or "Unknown",
+                is_new_device=True,
+            )
 
         return LoginResponse(
             access_token=access_token,
