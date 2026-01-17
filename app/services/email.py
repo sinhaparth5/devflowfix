@@ -11,6 +11,10 @@ the DevFlowFix email microservice (Azure-hosted .NET service).
 from datetime import datetime, timezone
 from typing import Optional, List
 from dataclasses import dataclass
+import hmac
+import hashlib
+import time
+import json
 import httpx
 import structlog
 
@@ -40,16 +44,44 @@ class EmailService:
     Service for sending emails via the .NET email microservice.
 
     Base URL: https://devflowfix-mail-service.azurewebsites.net
+    Authentication: HMAC-SHA256
     """
 
     def __init__(self):
         self.base_url = settings.email_service_url
         self.timeout = settings.email_service_timeout
         self.frontend_url = settings.frontend_url
+        self.api_key = settings.email_service_api_key
+        self.secret = settings.email_service_secret
+
+    def _generate_signature(self, timestamp: int, method: str, path: str, body: str) -> str:
+        """
+        Generate HMAC-SHA256 signature for request authentication.
+
+        Signature is computed as: HMAC-SHA256("{timestamp}:{method}:{path}:{body}", secret)
+        """
+        message = f"{timestamp}:{method}:{path}:{body}"
+        signature = hmac.new(
+            self.secret.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return signature
+
+    def _get_auth_headers(self, path: str, body: str) -> dict:
+        """Generate authentication headers for email service request."""
+        timestamp = int(time.time())
+        signature = self._generate_signature(timestamp, "POST", path, body)
+        return {
+            "Content-Type": "application/json",
+            "X-Api-Key": self.api_key,
+            "X-Timestamp": str(timestamp),
+            "X-Signature": signature
+        }
 
     async def _send_request(self, endpoint: str, payload: dict) -> EmailResponse:
         """
-        Send a request to the email service.
+        Send an authenticated request to the email service.
 
         Args:
             endpoint: API endpoint path (e.g., "/api/email/welcome")
@@ -58,14 +90,19 @@ class EmailService:
         Returns:
             EmailResponse with success status and message ID or error
         """
-        url = f"{self.base_url}{endpoint}"
+        path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+        url = f"{self.base_url}{path}"
+
+        # Serialize body with consistent formatting for signature
+        body = json.dumps(payload, separators=(",", ":"))
+        headers = self._get_auth_headers(path, body)
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
+                    content=body,
+                    headers=headers
                 )
 
                 if response.status_code == 200:

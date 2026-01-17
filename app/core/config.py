@@ -434,6 +434,16 @@ class Settings(BaseSettings):
         description="Email service request timeout in seconds"
     )
 
+    email_service_api_key: str = Field(
+        default="",
+        description="API key for email service authentication"
+    )
+
+    email_service_secret: str = Field(
+        default="",
+        description="Secret key for HMAC-SHA256 signature generation"
+    )
+
     frontend_url: str = Field(
         default="https://devflowfix.com",
         description="Frontend URL for email links (login, verification, etc.)"
