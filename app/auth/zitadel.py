@@ -348,7 +348,7 @@ async def get_current_active_user(
         db_user = UserTable(
             user_id=user.sub,
             email=user.email,
-            full_name=user.name,
+            full_name=user.name or f"{user.given_name} {user.family_name}".strip(),
             avatar_url=user.picture,
             is_active=True,
             is_verified=user.email_verified,
@@ -356,6 +356,7 @@ async def get_current_active_user(
             oauth_id=user.sub,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
+            last_login_at=datetime.now(timezone.utc),
         )
         db.add(db_user)
         db.commit()
@@ -367,16 +368,39 @@ async def get_current_active_user(
             email=user.email,
         )
     else:
-        # Update user info from Zitadel (in case it changed)
-        if db_user.email != user.email or db_user.full_name != user.name:
-            db_user.email = user.email
-            db_user.full_name = user.name
-            db_user.avatar_url = user.picture or db_user.avatar_url
-            db_user.updated_at = datetime.now(timezone.utc)
-            db.commit()
+        # Sync user info from Zitadel on every login
+        updated = False
 
-        # Update last login
+        # Always sync these fields from Zitadel (source of truth)
+        new_full_name = user.name or f"{user.given_name} {user.family_name}".strip()
+
+        if db_user.email != user.email:
+            db_user.email = user.email
+            updated = True
+
+        if new_full_name and db_user.full_name != new_full_name:
+            db_user.full_name = new_full_name
+            updated = True
+
+        if user.picture and db_user.avatar_url != user.picture:
+            db_user.avatar_url = user.picture
+            updated = True
+
+        if db_user.is_verified != user.email_verified:
+            db_user.is_verified = user.email_verified
+            updated = True
+
+        # Always update last login
         db_user.last_login_at = datetime.now(timezone.utc)
+
+        if updated:
+            db_user.updated_at = datetime.now(timezone.utc)
+            logger.info(
+                "user_synced_from_zitadel",
+                user_id=user.sub,
+                email=user.email,
+            )
+
         db.commit()
 
     # Check if user is active
