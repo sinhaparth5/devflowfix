@@ -19,7 +19,6 @@ from app.adapters.database.postgres import (
     MetricTable,
     ConfigTable,
     UserTable,
-    UserSessionTable,
     AuditLogTable,
     UserDetailsTable,
     BackgroundJobTable,
