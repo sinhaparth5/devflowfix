@@ -22,7 +22,7 @@ from app.core.schemas.analytics import (
     DashboardSummaryResponse,
 )
 from app.dependencies import get_db
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.services.analytics.analytics_service import AnalyticsService
 
 logger = structlog.get_logger(__name__)
