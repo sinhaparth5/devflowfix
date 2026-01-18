@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.schemas.oauth import OAuthConnectionListResponse
 from app.dependencies import get_db
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.services.oauth.token_manager import get_token_manager
 from app.core.config import get_settings
 

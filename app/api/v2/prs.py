@@ -25,7 +25,7 @@ from app.core.schemas.pr import (
     PRCommentRequest,
 )
 from app.dependencies import get_db
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.services.oauth.token_manager import get_token_manager
 from app.services.pr.pr_creator import PRCreator
 from app.adapters.database.postgres.models import (
@@ -537,28 +537,46 @@ async def get_pr_stats(
     try:
         user = current_user_data["user"]
 
-        # Get all incidents with PRs
-        incidents = db.query(IncidentTable).filter(
-            IncidentTable.user_id == user.user_id,
+        # Get all PRs from PullRequestTable for user's repositories
+        from app.adapters.database.postgres.models import PullRequestTable, PRStatus as DBPRStatus
+
+        # Get user's repository connections
+        repo_connections = db.query(RepositoryConnectionTable).filter(
+            RepositoryConnectionTable.user_id == user.user_id,
         ).all()
 
-        total_prs = 0
-        merged_prs = 0
-        closed_prs = 0
-        open_prs = 0
-        draft_prs = 0
-        incidents_with_prs = 0
-        total_files_changed = 0
+        repo_full_names = [rc.repository_full_name for rc in repo_connections]
 
-        for incident in incidents:
-            if incident.metadata and "prs" in incident.metadata:
-                prs_data = incident.metadata["prs"]
-                if prs_data:
-                    incidents_with_prs += 1
-                    total_prs += len(prs_data)
+        # Query PRs for user's repositories
+        prs = db.query(PullRequestTable).filter(
+            PullRequestTable.repository_full.in_(repo_full_names)
+        ).all()
 
-                    for pr_data in prs_data:
-                        total_files_changed += pr_data.get("files_changed", 0)
+        total_prs = len(prs)
+        merged_prs = len([p for p in prs if p.status == DBPRStatus.MERGED])
+        closed_prs = len([p for p in prs if p.status == DBPRStatus.CLOSED])
+        open_prs = len([p for p in prs if p.status == DBPRStatus.OPEN])
+        draft_prs = len([p for p in prs if p.status == DBPRStatus.DRAFT])
+
+        # Calculate total files changed
+        total_files_changed = sum(p.files_changed or 0 for p in prs)
+
+        # Calculate average time to merge for merged PRs
+        merge_times = []
+        for pr in prs:
+            if pr.status == DBPRStatus.MERGED and pr.merged_at and pr.created_at:
+                merge_duration = (pr.merged_at - pr.created_at).total_seconds() / 3600  # Convert to hours
+                merge_times.append(merge_duration)
+
+        avg_time_to_merge_hours = sum(merge_times) / len(merge_times) if merge_times else None
+
+        # Get incidents with PRs
+        incident_ids = set(p.incident_id for p in prs)
+        incidents_with_prs = len(incident_ids)
+
+        # Count incidents that were auto-fixed (have merged PRs)
+        merged_incident_ids = set(p.incident_id for p in prs if p.status == DBPRStatus.MERGED)
+        incidents_auto_fixed = len(merged_incident_ids)
 
         # Calculate statistics
         merge_rate = (merged_prs / total_prs * 100) if total_prs > 0 else 0.0
@@ -572,11 +590,11 @@ async def get_pr_stats(
             open_prs=open_prs,
             draft_prs=draft_prs,
             merge_rate=merge_rate,
-            avg_time_to_merge_hours=None,  # Would need to track PR merge times
+            avg_time_to_merge_hours=avg_time_to_merge_hours,
             avg_files_changed=avg_files_changed,
             success_rate=success_rate,
             incidents_with_prs=incidents_with_prs,
-            incidents_auto_fixed=merged_prs,
+            incidents_auto_fixed=incidents_auto_fixed,
         )
 
     except Exception as e:

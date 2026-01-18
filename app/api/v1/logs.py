@@ -12,7 +12,7 @@ import json
 
 from app.dependencies import get_db
 from app.adapters.database.postgres.repositories.users import ApplicationLogRepository
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.core.schemas.logs import ApplicationLogResponse, ApplicationLogListResponse
 
 logger = structlog.get_logger()

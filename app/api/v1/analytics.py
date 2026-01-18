@@ -13,7 +13,7 @@ from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.enums import IncidentSource, Severity, Outcome
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.core.schemas.jobs import JobType
 from app.services.export import CSVExportService, PDFExportService
 

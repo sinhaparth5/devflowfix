@@ -22,63 +22,57 @@ class PRStatus(str, enum.Enum):
 class UserTable(SQLModel, table=True):
     """
     User database table.
-    Stores user information for Zero Trust authentication.
+
+    Authentication is handled by Zitadel (OIDC).
+    This table stores local user data and preferences.
+
+    The user_id is the Zitadel 'sub' claim (Zitadel user ID).
     """
     __tablename__ = "users"
-    # Primary Key
+
+    # Primary Key - Zitadel user ID (sub claim)
     user_id: str = Field(primary_key=True, max_length=50)
 
-    # Authentication
+    # User Identity (synced from Zitadel)
     email: str = Field(unique=True, index=True, max_length=255)
-    hashed_password: Optional[str] = Field(default=None, sa_column=Column(Text))
-
-    # OAuth Authentication
-    oauth_provider: Optional[str] = Field(default=None, max_length=50, index=True)  # 'google', 'github', or None
-    oauth_id: Optional[str] = Field(default=None, max_length=255, index=True)  # Unique ID from OAuth provider
-
-    # Profile Information
     full_name: Optional[str] = Field(default=None, max_length=255)
     avatar_url: Optional[str] = Field(default=None, max_length=500)
 
-    # Organization/Team
+    # Auth Provider Info
+    oauth_provider: str = Field(default="zitadel", max_length=50, index=True)
+    oauth_id: Optional[str] = Field(default=None, max_length=255, index=True)
+
+    # Organization/Team (local authorization)
     organization_id: Optional[str] = Field(default=None, max_length=50, index=True)
     team_id: Optional[str] = Field(default=None, max_length=50, index=True)
     role: str = Field(default="user", max_length=50, index=True)
 
-    # Zero Trust Fields
+    # Account Status
     is_active: bool = Field(default=True, index=True)
     is_verified: bool = Field(default=False)
-    is_mfa_enabled: bool = Field(default=False)
-    mfa_secret: Optional[str] = Field(default=None, sa_column=Column(Text))
 
-    # Session Management
+    # Login Tracking (for audit)
     last_login_at: Optional[datetime] = Field(default=None)
     last_login_ip: Optional[str] = Field(default=None, max_length=45)
     last_login_user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
-    failed_login_attempts: int = Field(default=0)
-    locked_until: Optional[datetime] = Field(default=None)
-       
-    # Token Management
-    refresh_token_hash: Optional[str] = Field(default=None, sa_column=Column(Text))
-    token_version: int = Field(default=0)
 
-    # API Keys for service accounts
+    # API Keys for machine-to-machine auth (optional feature)
     api_key_hash: Optional[str] = Field(default=None, sa_column=Column(Text))
     api_key_prefix: Optional[str] = Field(default=None, max_length=10)
 
-    # GitHub Webhook Secret (dynamically generated, unique per user)
+    # GitHub Integration
     github_webhook_secret: Optional[str] = Field(default=None, sa_column=Column(Text))
     github_username: Optional[str] = Field(default=None, max_length=50)
 
-    # Audit
+    # Audit Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: Optional[str] = Field(default=None, max_length=50)
 
-    # Settings/Preferences (strored as JSON)
+    # User Preferences (stored as JSON)
     preferences: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
-    # Allowed resources (Zero Trust - explicit permissions)
+    # Resource Permissions (local authorization)
     allowed_repositories: list = Field(default_factory=list, sa_column=Column(JSON))
     allowed_namespaces: list = Field(default_factory=list, sa_column=Column(JSON))
     allowed_services: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -90,43 +84,8 @@ class UserTable(SQLModel, table=True):
         Index('idx_users_oauth', 'oauth_provider', 'oauth_id'),
     )
 
-class UserSessionTable(SQLModel, table=True):
-    """
-    User session table for Zero Trust session management.
-    Each session is tracked individually for security
-    """
-    __tablename__ = "user_sessions"
+# UserSessionTable removed - Sessions now managed by Zitadel
 
-    # Primary Key
-    session_id: str = Field(primary_key=True, max_length=50)
-
-    # Foregin Key to User
-    user_id: str = Field(foreign_key="users.user_id", index=True, max_length=50)
-
-    # Session Details
-    refresh_token_hash: str = Field(sa_column=Column(Text))
-    device_fingerprint: Optional[str] = Field(default=None, max_length=255)
-    ip_address: Optional[str] = Field(default=None, max_length=45)
-    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
-
-    # Location (for anomaly detection)
-    country: Optional[str] = Field(default=None, max_length=2)
-    city: Optional[str] = Field(default=None, max_length=100)
-    
-    # Session state
-    is_active: bool = Field(default=True, index=True)
-    is_revoked: bool = Field(default=False)
-    revoked_reason: Optional[str] = Field(default=None, max_length=255)
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    last_used_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime = Field(index=True)
-
-    __table_args__ = (
-        Index('idx_sessions_user_active', 'user_id', 'is_active'),
-        Index('idx_sessions_expires', 'expires_at'),
-    )
 
 class AuditLogTable(SQLModel, table=True):
     """
