@@ -360,3 +360,155 @@ The frontend handles authentication entirely through Zitadel:
 5. **Seamless API calls** - Interceptor handles token attachment
 
 The backend's only job is to validate the tokens it receives - it never participates in the login flow itself.
+
+---
+
+## Backend Integration
+
+### What Changed in the Backend
+
+The Python backend has been updated to use Zitadel for authentication. Here's what was removed and added:
+
+**Removed:**
+- `app/api/v1/auth.py` - Old auth endpoints (login, register, refresh, etc.)
+- `app/services/auth.py` - Old auth service with password hashing, JWT creation
+- `SessionRepository` - Session management (Zitadel handles sessions now)
+- Database fields: `hashed_password`, `is_mfa_enabled`, `mfa_secret`, `failed_login_attempts`, `locked_until`, `refresh_token_hash`, `token_version`
+- `user_sessions` table - No longer needed
+
+**Added:**
+- `app/auth/zitadel.py` - JWT validation using Zitadel's JWKS
+- `app/auth/config.py` - Zitadel settings
+- `app/core/schemas/zitadel.py` - User response schemas
+
+### Backend Environment Variables
+
+Add these to your `.env` file:
+
+```bash
+# Zitadel Configuration
+ZITADEL_ISSUER=https://your-instance.zitadel.cloud
+ZITADEL_CLIENT_ID=your-client-id-from-zitadel
+ZITADEL_PROJECT_ID=your-project-id
+
+# Optional
+ZITADEL_JWKS_CACHE_TTL=3600
+```
+
+### How Backend Token Validation Works
+
+```
+1. REQUEST ARRIVES
+   └── Authorization: Bearer eyJhbG...
+
+2. EXTRACT TOKEN
+   └── get_current_user dependency activates
+   └── Token extracted from Authorization header
+
+3. VALIDATE WITH ZITADEL JWKS
+   └── Fetch public keys from Zitadel (cached)
+   └── Verify token signature
+   └── Check expiration, issuer, audience
+
+4. EXTRACT USER INFO
+   └── Parse claims from validated token
+   └── Create ZitadelUser object with:
+       - sub (Zitadel user ID)
+       - email
+       - name
+       - roles
+
+5. SYNC TO DATABASE
+   └── get_current_active_user dependency
+   └── Find or create user in our database
+   └── Update last login timestamp
+   └── Return both token user and database user
+```
+
+### Database Migration Required
+
+Run Alembic to generate and apply the migration:
+
+```bash
+# Generate migration
+alembic revision --autogenerate -m "Remove auth fields for Zitadel migration"
+
+# Review the generated migration file, then apply
+alembic upgrade head
+```
+
+The migration will:
+- Drop columns from `users` table: `hashed_password`, `is_mfa_enabled`, `mfa_secret`, `failed_login_attempts`, `locked_until`, `refresh_token_hash`, `token_version`
+- Drop the `user_sessions` table entirely
+
+### Auth Dependencies Available
+
+Import these in your API routes:
+
+```python
+from app.auth import (
+    get_current_user,        # Returns ZitadelUser from token
+    get_current_active_user, # Returns {"user": ZitadelUser, "db_user": UserTable}
+    get_optional_user,       # Returns ZitadelUser or None (for optional auth)
+    require_admin,           # Requires user has admin role
+)
+```
+
+**Example usage:**
+
+```python
+from fastapi import Depends
+from app.auth import get_current_active_user
+
+@router.get("/my-data")
+async def get_my_data(auth: dict = Depends(get_current_active_user)):
+    user = auth["user"]      # ZitadelUser from token
+    db_user = auth["db_user"] # UserTable from database
+    return {"email": user.email, "user_id": db_user.user_id}
+```
+
+### User Auto-Creation
+
+When a user logs in for the first time:
+
+1. Frontend authenticates with Zitadel
+2. Frontend calls backend API with access token
+3. Backend validates token with Zitadel
+4. Backend checks if user exists in database (by email or Zitadel sub)
+5. If not found, creates new user record automatically
+6. User can immediately use the application
+
+This eliminates the need for a separate registration flow.
+
+---
+
+## Complete Setup Checklist
+
+### Zitadel Console
+- [ ] Create Project "DevFlowFix"
+- [ ] Create User Agent Application "DevFlowFix Web"
+- [ ] Add redirect URIs (dev + prod)
+- [ ] Add post-logout URIs (dev + prod)
+- [ ] Copy Client ID and Issuer URL
+- [ ] (Optional) Configure social login providers
+
+### Backend
+- [ ] Add Zitadel environment variables to `.env`
+- [ ] Run database migration (`alembic upgrade head`)
+- [ ] Verify API endpoints return 401 without token
+
+### Frontend
+- [ ] Update `auth.config.ts` with Zitadel settings
+- [ ] Implement auth service with OIDC library
+- [ ] Add auth guard to protected routes
+- [ ] Add auth interceptor for API calls
+- [ ] Create callback component
+- [ ] Test login/logout flow
+
+### Testing
+- [ ] Login with email/password at Zitadel
+- [ ] Verify callback redirects correctly
+- [ ] Verify API calls include token
+- [ ] Verify protected routes require login
+- [ ] Test token refresh (wait for token expiry)
+- [ ] Test logout clears session

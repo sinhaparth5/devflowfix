@@ -418,3 +418,29 @@ async def get_optional_user(
         return await auth.get_user_from_token(credentials.credentials)
     except HTTPException:
         return None
+
+
+async def require_admin(
+    current_user_data: dict = Depends(get_current_active_user),
+) -> dict:
+    """
+    FastAPI dependency to require admin role.
+
+    Usage:
+        @router.delete("/users/{user_id}")
+        async def delete_user(admin: dict = Depends(require_admin)):
+            # Only admins can reach here
+            ...
+
+    Raises:
+        HTTPException: 403 if user is not an admin
+    """
+    db_user = current_user_data.get("db_user")
+
+    if not db_user or db_user.role not in ["admin", "superadmin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return current_user_data

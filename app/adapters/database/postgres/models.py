@@ -84,43 +84,8 @@ class UserTable(SQLModel, table=True):
         Index('idx_users_oauth', 'oauth_provider', 'oauth_id'),
     )
 
-class UserSessionTable(SQLModel, table=True):
-    """
-    User session table for Zero Trust session management.
-    Each session is tracked individually for security
-    """
-    __tablename__ = "user_sessions"
+# UserSessionTable removed - Sessions now managed by Zitadel
 
-    # Primary Key
-    session_id: str = Field(primary_key=True, max_length=50)
-
-    # Foregin Key to User
-    user_id: str = Field(foreign_key="users.user_id", index=True, max_length=50)
-
-    # Session Details
-    refresh_token_hash: str = Field(sa_column=Column(Text))
-    device_fingerprint: Optional[str] = Field(default=None, max_length=255)
-    ip_address: Optional[str] = Field(default=None, max_length=45)
-    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
-
-    # Location (for anomaly detection)
-    country: Optional[str] = Field(default=None, max_length=2)
-    city: Optional[str] = Field(default=None, max_length=100)
-    
-    # Session state
-    is_active: bool = Field(default=True, index=True)
-    is_revoked: bool = Field(default=False)
-    revoked_reason: Optional[str] = Field(default=None, max_length=255)
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    last_used_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime = Field(index=True)
-
-    __table_args__ = (
-        Index('idx_sessions_user_active', 'user_id', 'is_active'),
-        Index('idx_sessions_expires', 'expires_at'),
-    )
 
 class AuditLogTable(SQLModel, table=True):
     """

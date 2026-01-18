@@ -13,7 +13,7 @@ import uuid
 from app.dependencies import get_db
 from app.adapters.database.postgres.repositories.incident import IncidentRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
-from app.api.v1.auth import get_current_active_user, require_admin
+from app.auth import get_current_active_user, require_admin
 from app.core.schemas.incident import (
     IncidentResponse,
     IncidentDetail,

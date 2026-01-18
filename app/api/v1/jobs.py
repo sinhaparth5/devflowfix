@@ -17,7 +17,7 @@ import uuid
 import os
 
 from app.dependencies import get_db
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.schemas.jobs import (
     JobCreate,
