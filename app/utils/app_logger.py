@@ -14,7 +14,7 @@ import structlog
 import traceback
 
 from app.adapters.database.postgres.models import ApplicationLogTable, LogLevel, LogCategory
-from app.adapters.database.postgres.repositories.users import ApplicationLogRepository
+from app.adapters.database.postgres.repositories.logs import ApplicationLogRepository
 
 logger = structlog.get_logger(__name__)
 
