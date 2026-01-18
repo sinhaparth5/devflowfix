@@ -4,7 +4,6 @@ from .models import (
     RemediationHistoryTable,
     MetricTable,
     ConfigTable,
-    UserSessionTable,
     UserTable,
     AuditLogTable,
     PullRequestTable,
@@ -35,10 +34,11 @@ from .repositories import (
 )
 
 __all__ = [
-    "UserSessionTable",
+    # User (auth handled by Zitadel, sessions removed)
     "UserTable",
     "AuditLogTable",
     "UserDetailsTable",
+    # Core tables
     "IncidentTable",
     "FeedbackTable",
     "RemediationHistoryTable",
@@ -51,12 +51,14 @@ __all__ = [
     "BackgroundJobTable",
     "JobStatus",
     "JobType",
+    # Connection
     "DatabaseConfig",
     "DatabaseConnectionPool",
     "get_connection_pool",
     "get_db_session",
     "get_lambda_session",
     "reset_connection_pool",
+    # Repositories
     "IncidentRepository",
     "FeedbackRepository",
     "RemediationHistoryRepository",

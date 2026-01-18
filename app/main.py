@@ -357,7 +357,6 @@ async def root():
 
 from app.api.v1.webhook import router as webhook_router
 from app.api.v1.analytics import router as analytics_router
-from app.api.v1.auth import router as auth_router
 from app.api.v1.incidents import router as incidents_router
 from app.api.v1.pr_management import router as pr_management_router
 from app.api.v1.user_details import router as user_details_router
@@ -365,11 +364,7 @@ from app.api.v1.logs import router as logs_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v2 import router as v2_router
 
-app.include_router(
-    auth_router,
-    prefix="/api/v1",
-    tags=["Authentication"],
-)
+# Note: Auth is now handled by Zitadel OIDC (see app/auth/)
 
 app.include_router(
     incidents_router,

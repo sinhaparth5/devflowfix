@@ -24,14 +24,7 @@ from app.services.oauth.token_manager import get_token_manager
 from app.services.workflow.workflow_tracker import WorkflowTracker
 from app.services.workflow.gitlab_pipeline_tracker import GitLabPipelineTracker
 
-try:
-    from app.api.v1.auth import get_current_active_user
-except ImportError:
-    async def get_current_active_user() -> dict:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Authentication module not available"
-        )
+from app.auth import get_current_active_user
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()

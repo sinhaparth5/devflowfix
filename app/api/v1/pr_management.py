@@ -17,7 +17,7 @@ import structlog
 from app.dependencies import get_db
 from app.core.schemas.common import PaginatedResponse
 from app.services.github_token_manager import GitHubTokenManager
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 
 logger = structlog.get_logger(__name__)
 

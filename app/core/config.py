@@ -198,17 +198,59 @@ class ConfidenceSettings(BaseSettings):
 
 class RateLimitSettings(BaseSettings):
     """Rate limiting configuration."""
-    
+
     enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
     requests: int = Field(default=100, alias="RATE_LIMIT_REQUESTS")
     window: int = Field(default=60, alias="RATE_LIMIT_WINDOW")
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
+
+
+class ZitadelSettings(BaseSettings):
+    """Zitadel OIDC authentication configuration."""
+
+    issuer: str = Field(
+        default="",
+        alias="ZITADEL_ISSUER",
+        description="Zitadel issuer URL (e.g., https://your-instance.zitadel.cloud)"
+    )
+    client_id: str = Field(
+        default="",
+        alias="ZITADEL_CLIENT_ID",
+        description="Zitadel application client ID"
+    )
+    project_id: str = Field(
+        default="",
+        alias="ZITADEL_PROJECT_ID",
+        description="Zitadel project ID for audience validation"
+    )
+    api_url: Optional[str] = Field(
+        default=None,
+        alias="ZITADEL_API_URL",
+        description="Zitadel API URL (defaults to issuer if not set)"
+    )
+    jwks_cache_ttl: int = Field(
+        default=3600,
+        alias="ZITADEL_JWKS_CACHE_TTL",
+        description="JWKS cache TTL in seconds"
+    )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if Zitadel is properly configured."""
+        return bool(self.issuer and self.client_id)
 
 
 class Settings(BaseSettings):
@@ -419,6 +461,24 @@ class Settings(BaseSettings):
     webhook_base_url: Optional[str] = Field(
         default=None,
         description="Base URL for webhooks (e.g., https://api.devflowfix.com)"
+    )
+
+    # Email service settings
+    email_service_url: str = Field(
+        default="https://devflowfix-mail-service.azurewebsites.net",
+        description="Base URL for the email microservice"
+    )
+
+    email_service_timeout: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="Email service request timeout in seconds"
+    )
+
+    frontend_url: str = Field(
+        default="https://devflowfix.com",
+        description="Frontend URL for email links (login, verification, etc.)"
     )
 
     # Slack settings
@@ -857,6 +917,11 @@ class Settings(BaseSettings):
     def backblaze(self) -> BackblazeSettings:
         """Get Backblaze settings."""
         return BackblazeSettings()
+
+    @property
+    def zitadel(self) -> ZitadelSettings:
+        """Get Zitadel authentication settings."""
+        return ZitadelSettings()
 
     # Methods
     def get_blast_radius_limit(self, time_window: str = "hour") -> int:

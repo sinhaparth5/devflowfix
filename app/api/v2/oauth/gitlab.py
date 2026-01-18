@@ -25,7 +25,7 @@ from app.core.schemas.oauth import (
     OAuthErrorResponse,
 )
 from app.dependencies import get_db
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.services.oauth.gitlab_oauth import GitLabOAuthProvider
 from app.services.oauth.token_manager import get_token_manager
 

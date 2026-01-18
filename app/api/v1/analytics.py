@@ -13,7 +13,7 @@ from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.enums import IncidentSource, Severity, Outcome
-from app.api.v1.auth import get_current_active_user
+from app.auth import get_current_active_user
 from app.core.schemas.jobs import JobType
 from app.services.export import CSVExportService, PDFExportService
 
@@ -210,7 +210,7 @@ async def get_breakdown_by_outcome(
 async def get_trends(
     current_user: dict = Depends(get_current_active_user),
     days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
-    granularity: str = Query("day", regex="^(hour|day|week)$", description="Time granularity"),
+    granularity: str = Query("day", pattern="^(hour|day|week)$", description="Time granularity"),
     db: Session = Depends(get_db),
 ) -> List[Dict[str, Any]]:
     """Get incident trends for the current authenticated user only."""
@@ -559,7 +559,7 @@ async def get_analytics_overview(
     description="Export analytics data to CSV or PDF format",
 )
 async def export_analytics(
-    format: str = Query(..., description="Export format (csv or pdf)", regex="^(csv|pdf)$"),
+    format: str = Query(..., description="Export format (csv or pdf)", pattern="^(csv|pdf)$"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),

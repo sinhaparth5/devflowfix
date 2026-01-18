@@ -13,7 +13,7 @@ import uuid
 from app.dependencies import get_db
 from app.adapters.database.postgres.repositories.incident import IncidentRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
-from app.api.v1.auth import get_current_active_user, require_admin
+from app.auth import get_current_active_user, require_admin
 from app.core.schemas.incident import (
     IncidentResponse,
     IncidentDetail,
@@ -309,7 +309,7 @@ async def get_incident_stats(
     description="Export incidents to CSV or PDF format. For large exports, creates a background job.",
 )
 async def export_incidents(
-    format: str = Query(..., description="Export format (csv or pdf)", regex="^(csv|pdf)$"),
+    format: str = Query(..., description="Export format (csv or pdf)", pattern="^(csv|pdf)$"),
     current_user: dict = Depends(get_current_active_user),
     incident_repo: IncidentRepository = Depends(get_incident_repository),
     db: Session = Depends(get_db),
