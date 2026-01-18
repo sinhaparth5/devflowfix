@@ -71,12 +71,18 @@ class ZitadelSettings(BaseSettings):
     @property
     def jwks_uri(self) -> str:
         """Get JWKS URI from issuer."""
-        return f"{self.issuer.rstrip('/')}/.well-known/jwks.json"
+        # Zitadel uses /oauth/v2/keys instead of /.well-known/jwks.json
+        return f"{self.issuer.rstrip('/')}/oauth/v2/keys"
 
     @property
     def openid_config_uri(self) -> str:
         """Get OpenID configuration URI."""
         return f"{self.issuer.rstrip('/')}/.well-known/openid-configuration"
+
+    @property
+    def userinfo_uri(self) -> str:
+        """Get userinfo endpoint URI."""
+        return f"{self.issuer.rstrip('/')}/oidc/v1/userinfo"
 
 
 @lru_cache()
