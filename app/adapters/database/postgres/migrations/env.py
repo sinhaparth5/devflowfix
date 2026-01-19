@@ -10,6 +10,10 @@ import sys
 # Add the project root to the path
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '../../../..')))
 
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Import SQLModel and all models
 from sqlmodel import SQLModel
 from app.adapters.database.postgres import (

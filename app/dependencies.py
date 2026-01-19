@@ -24,6 +24,16 @@ def get_engine():
     global _engine
     if _engine is None:
         try:
+            # Build connect_args based on database provider
+            connect_args = {
+                "connect_timeout": 10,  # Connection timeout
+            }
+
+            # Skip statement_timeout for Neon pooled connections (not supported)
+            # Neon pooler URLs contain "pooler" in the hostname
+            if "neon.tech" not in settings.database_url or "pooler" not in settings.database_url:
+                connect_args["options"] = "-c statement_timeout=30000"  # 30s query timeout
+
             _engine = create_engine(
                 settings.database_url,
                 pool_size=settings.database_pool_size,
@@ -32,10 +42,7 @@ def get_engine():
                 pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_timeout=30,  # Wait max 30s for connection from pool
                 echo=settings.log_level == "DEBUG",
-                connect_args={
-                    "connect_timeout": 10,  # Connection timeout
-                    "options": "-c statement_timeout=30000",  # 30s query timeout
-                },
+                connect_args=connect_args,
                 execution_options={
                     "isolation_level": "READ COMMITTED"  # Optimal for most workloads
                 }
