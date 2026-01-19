@@ -103,8 +103,7 @@ def custom_openapi():
         "HTTPBearer": {
             "type": "http",
             "scheme": "bearer",
-            "bearerFormat": "JWT",
-            "description": "Enter your JWT token from /api/v1/auth/login"
+            "description": "Enter your Zitadel access token"
         }
     }
     

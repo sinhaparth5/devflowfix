@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 import structlog
 
 from app.dependencies import get_db
-from app.auth import get_current_user
+from app.auth import get_current_active_user
 from app.adapters.database.postgres.repositories.user_details import UserDetailsRepository
 from app.core.schemas.users import (
     UserDetailsUpdate,
@@ -27,7 +27,7 @@ def get_user_details_repo(db: Session = Depends(get_db)) -> UserDetailsRepositor
 
 @router.get("/me", response_model=UserDetailsResponse)
 async def get_current_user_details(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -51,7 +51,7 @@ async def get_current_user_details(
 @router.get("/{user_id}", response_model=UserDetailsResponse)
 async def get_user_details_by_id(
     user_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -60,7 +60,7 @@ async def get_user_details_by_id(
     Only the user themselves or admins can access user details.
     """
     # Check if user is requesting their own details or is an admin
-    if current_user["user"].user_id != user_id and current_user["user"].role != "admin":
+    if current_user["user"].user_id != user_id and current_user["db_user"].role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this user's details"
@@ -80,7 +80,7 @@ async def get_user_details_by_id(
 @router.put("/me", response_model=UserDetailsResponse)
 async def update_current_user_details(
     details: UserDetailsUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -119,7 +119,7 @@ async def update_current_user_details(
 async def update_user_details_by_id(
     user_id: str,
     details: UserDetailsUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -128,7 +128,7 @@ async def update_user_details_by_id(
     Only the user themselves or admins can update user details.
     """
     # Check if user is updating their own details or is an admin
-    if current_user["user"].user_id != user_id and current_user["user"].role != "admin":
+    if current_user["user"].user_id != user_id and current_user["db_user"].role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to update this user's details"
@@ -161,7 +161,7 @@ async def update_user_details_by_id(
 
 @router.delete("/me", response_model=SuccessResponse)
 async def delete_current_user_details(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -184,7 +184,7 @@ async def delete_current_user_details(
 @router.delete("/{user_id}", response_model=SuccessResponse)
 async def delete_user_details_by_id(
     user_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_active_user),
     user_details_repo: UserDetailsRepository = Depends(get_user_details_repo),
 ):
     """
@@ -193,7 +193,7 @@ async def delete_user_details_by_id(
     Only the user themselves or admins can delete user details.
     """
     # Check if user is deleting their own details or is an admin
-    if current_user["user"].user_id != user_id and current_user["user"].role != "admin":
+    if current_user["user"].user_id != user_id and current_user["db_user"].role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to delete this user's details"

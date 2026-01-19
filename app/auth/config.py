@@ -33,6 +33,13 @@ class ZitadelSettings(BaseSettings):
         description="Application Client ID from Zitadel"
     )
 
+    # Client Secret from Zitadel Console (required for token introspection)
+    client_secret: str = Field(
+        default="",
+        alias="ZITADEL_CLIENT_SECRET",
+        description="Application Client Secret from Zitadel (for introspection)"
+    )
+
     # Project ID (optional, for audience validation)
     project_id: str = Field(
         default="",
@@ -83,6 +90,16 @@ class ZitadelSettings(BaseSettings):
     def userinfo_uri(self) -> str:
         """Get userinfo endpoint URI."""
         return f"{self.issuer.rstrip('/')}/oidc/v1/userinfo"
+
+    @property
+    def introspection_uri(self) -> str:
+        """Get token introspection endpoint URI."""
+        return f"{self.issuer.rstrip('/')}/oauth/v2/introspect"
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if Zitadel is properly configured."""
+        return bool(self.issuer and self.client_id)
 
 
 @lru_cache()

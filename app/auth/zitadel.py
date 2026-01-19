@@ -8,13 +8,11 @@ JWT validation and user extraction for Zitadel OIDC tokens.
 """
 
 from datetime import datetime, timezone
-from typing import Optional, Annotated, Any
+from typing import Optional, Annotated
 from dataclasses import dataclass, field
 import httpx
 import structlog
-from jose import jwt, jwk, JWTError
-from jose.exceptions import JWKError
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -106,106 +104,146 @@ class ZitadelUser:
 
 class ZitadelAuth:
     """
-    Zitadel JWT authentication handler.
+    Zitadel authentication handler for PKCE/Public Client applications.
 
-    Validates tokens using Zitadel's JWKS (JSON Web Key Set).
+    Validates opaque tokens using Zitadel's Userinfo endpoint.
+    This works with public clients (User Agent apps) that use PKCE.
     """
 
     def __init__(self, settings: ZitadelSettings):
         self.settings = settings
-        self._jwks: Optional[dict] = None
-        self._jwks_fetched_at: Optional[datetime] = None
+        # Cache for userinfo results (short TTL for security)
+        self._userinfo_cache: dict[str, tuple[dict, datetime]] = {}
+        self._cache_ttl_seconds = 30  # Short cache for security
 
-    async def get_jwks(self) -> dict:
+    def _get_cached_userinfo(self, token: str) -> Optional[dict]:
+        """Get cached userinfo result if still valid."""
+        if token in self._userinfo_cache:
+            claims, cached_at = self._userinfo_cache[token]
+            age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+            if age < self._cache_ttl_seconds:
+                return claims
+            # Remove expired cache entry
+            del self._userinfo_cache[token]
+        return None
+
+    def _cache_userinfo(self, token: str, claims: dict) -> None:
+        """Cache userinfo result."""
+        # Limit cache size to prevent memory issues
+        if len(self._userinfo_cache) > 1000:
+            # Clear oldest entries
+            self._userinfo_cache.clear()
+        self._userinfo_cache[token] = (claims, datetime.now(timezone.utc))
+
+    async def get_userinfo(self, token: str) -> dict:
         """
-        Fetch and cache JWKS from Zitadel.
+        Validate token using Zitadel's userinfo endpoint.
+
+        This validates opaque tokens by calling Zitadel's userinfo API.
+        Works with PKCE/public client applications (no client secret needed).
+
+        Args:
+            token: Access token string (opaque)
 
         Returns:
-            JWKS dictionary with signing keys
+            User info dictionary with claims
+
+        Raises:
+            HTTPException: If token is invalid or expired
         """
-        now = datetime.now(timezone.utc)
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No token provided",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-        # Check if cache is still valid
-        if self._jwks and self._jwks_fetched_at:
-            cache_age = (now - self._jwks_fetched_at).total_seconds()
-            if cache_age < self.settings.jwks_cache_ttl:
-                return self._jwks
+        # Check cache first
+        cached = self._get_cached_userinfo(token)
+        if cached:
+            logger.debug("userinfo_cache_hit", sub=cached.get("sub"))
+            return cached
 
-        # Fetch fresh JWKS
+        # Call userinfo endpoint
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    self.settings.jwks_uri,
+                    self.settings.userinfo_uri,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/json",
+                    },
                     timeout=10.0,
                 )
-                response.raise_for_status()
-                self._jwks = response.json()
-                self._jwks_fetched_at = now
 
-                logger.info(
-                    "jwks_fetched",
-                    issuer=self.settings.issuer,
-                    keys_count=len(self._jwks.get("keys", [])),
+                if response.status_code == 401:
+                    logger.warning(
+                        "userinfo_unauthorized",
+                        token_preview=token[:20] + "...",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid or expired token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if response.status_code != 200:
+                    logger.warning(
+                        "userinfo_request_failed",
+                        status_code=response.status_code,
+                        response=response.text[:200],
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token validation failed",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                result = response.json()
+
+                # Userinfo must have a sub claim
+                if not result.get("sub"):
+                    logger.warning("userinfo_missing_sub", result=result)
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid token: missing user identifier",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                logger.debug(
+                    "userinfo_fetched",
+                    sub=result.get("sub"),
+                    email=result.get("email"),
                 )
 
-                return self._jwks
+                # Cache the result
+                self._cache_userinfo(token, result)
 
-        except httpx.HTTPError as e:
-            logger.error("jwks_fetch_failed", error=str(e))
-            # Return cached JWKS if available, even if expired
-            if self._jwks:
-                logger.warning("using_stale_jwks")
-                return self._jwks
+                return result
+
+        except HTTPException:
+            raise
+        except httpx.TimeoutException:
+            logger.error("userinfo_timeout")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Unable to fetch authentication keys",
+                detail="Authentication service timeout",
             )
-
-    def _get_signing_key(self, token: str, jwks: dict) -> Any:
-        """
-        Get the signing key for a token from JWKS.
-
-        Args:
-            token: JWT token string
-            jwks: JWKS dictionary
-
-        Returns:
-            Signing key for token verification
-        """
-        try:
-            # Get the key ID from token header
-            unverified_header = jwt.get_unverified_header(token)
-            kid = unverified_header.get("kid")
-
-            if not kid:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token missing key ID",
-                )
-
-            # Find matching key in JWKS
-            for key in jwks.get("keys", []):
-                if key.get("kid") == kid:
-                    return jwk.construct(key)
-
+        except httpx.HTTPError as e:
+            logger.error("userinfo_error", error=str(e))
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token signing key not found",
-            )
-
-        except JWKError as e:
-            logger.error("jwk_construction_failed", error=str(e))
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token signing key",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service unavailable",
             )
 
     async def validate_token(self, token: str) -> dict:
         """
-        Validate a JWT token and return claims.
+        Validate a token and return claims.
+
+        Uses userinfo endpoint to validate opaque tokens from PKCE flow.
 
         Args:
-            token: JWT access token string
+            token: Access token string
 
         Returns:
             Token claims dictionary
@@ -213,60 +251,7 @@ class ZitadelAuth:
         Raises:
             HTTPException: If token is invalid
         """
-        # Fetch JWKS
-        jwks = await self.get_jwks()
-
-        # Get signing key
-        signing_key = self._get_signing_key(token, jwks)
-
-        try:
-            # Decode and validate token
-            claims = jwt.decode(
-                token,
-                signing_key,
-                algorithms=["RS256"],
-                issuer=self.settings.issuer,
-                options={
-                    "verify_aud": False,  # Zitadel doesn't always set aud
-                    "verify_iat": True,
-                    "verify_exp": True,
-                    "verify_nbf": True,
-                    "verify_iss": True,
-                    "verify_sub": True,
-                },
-            )
-
-            logger.debug(
-                "token_validated",
-                sub=claims.get("sub"),
-                exp=claims.get("exp"),
-            )
-
-            return claims
-
-        except jwt.ExpiredSignatureError:
-            logger.warning("token_expired")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        except jwt.JWTClaimsError as e:
-            logger.warning("token_claims_invalid", error=str(e))
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token claims: {str(e)}",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        except JWTError as e:
-            logger.warning("token_invalid", error=str(e))
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        return await self.get_userinfo(token)
 
     async def get_user_from_token(self, token: str) -> ZitadelUser:
         """
