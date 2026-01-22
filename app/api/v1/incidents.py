@@ -449,22 +449,23 @@ async def get_incident(
     Admins can access any incident.
     """
     user = current_user["user"]
-    
+    db_user = current_user["db_user"]
+
     incident = incident_repo.get_by_id(incident_id)
-    
+
     if not incident:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Incident not found: {incident_id}",
         )
-    
+
     # Check ownership (admins can see all)
-    if user.role != "admin" and incident.user_id != user.user_id:
+    if db_user.role != "admin" and incident.user_id != user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this incident",
         )
-    
+
     return IncidentDetail.model_validate(incident)
 
 

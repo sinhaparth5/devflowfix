@@ -1222,14 +1222,15 @@ async def generate_my_webhook_secret(
     Generate new webhook secret for authenticated user with complete GitHub setup instructions.
     """
     user = current_user_data["user"]
-    
+    db_user = current_user_data["db_user"]
+
     new_secret = generate_webhook_secret()
-    
-    user.github_webhook_secret = new_secret
-    user.updated_at = datetime.now(timezone.utc)
+
+    db_user.github_webhook_secret = new_secret
+    db_user.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(user)
-    
+    db.refresh(db_user)
+
     logger.info(
         "webhook_secret_generated_for_authenticated_user",
         user_id=user.user_id,
@@ -1238,15 +1239,15 @@ async def generate_my_webhook_secret(
     )
     
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
-    
+    webhook_url = f"{base_url}/api/v1/webhook/github/{db_user.user_id}"
+
     return {
         "success": True,
         "message": "Webhook secret generated successfully",
         "user": {
-            "user_id": user.user_id,
-            "email": user.email,
-            "full_name": user.full_name,
+            "user_id": db_user.user_id,
+            "email": db_user.email,
+            "full_name": db_user.full_name,
         },
         "webhook_secret": new_secret,
         "webhook_url": webhook_url,
@@ -1382,33 +1383,33 @@ async def get_my_webhook_info(
     """
     Get webhook configuration for authenticated user.
     """
-    user = current_user_data["user"]
-    
-    has_secret = bool(user.github_webhook_secret)
+    db_user = current_user_data["db_user"]
+
+    has_secret = bool(db_user.github_webhook_secret)
     secret_preview = None
-    
-    if has_secret and user.github_webhook_secret:
-        secret = user.github_webhook_secret
+
+    if has_secret and db_user.github_webhook_secret:
+        secret = db_user.github_webhook_secret
         if len(secret) > 8:
             secret_preview = f"{secret[:4]}...{secret[-4:]}"
         else:
             secret_preview = "****"
-    
+
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
-    
+    webhook_url = f"{base_url}/api/v1/webhook/github/{db_user.user_id}"
+
     return {
         "user": {
-            "user_id": user.user_id,
-            "email": user.email,
-            "full_name": user.full_name,
+            "user_id": db_user.user_id,
+            "email": db_user.email,
+            "full_name": db_user.full_name,
         },
         "webhook_configuration": {
             "secret_configured": has_secret,
             "secret_preview": secret_preview,
-            "secret_length": len(user.github_webhook_secret) if has_secret else 0,
+            "secret_length": len(db_user.github_webhook_secret) if has_secret else 0,
             "webhook_url": webhook_url,
-            "last_updated": user.updated_at.isoformat() if user.updated_at else None,
+            "last_updated": db_user.updated_at.isoformat() if db_user.updated_at else None,
         },
         "github_settings": {
             "payload_url": webhook_url,
@@ -1493,39 +1494,39 @@ async def test_my_webhook_signature(
     """
     Generate test signature for webhook payload using authenticated user's secret.
     """
-    user = current_user_data["user"]
-    
-    if not user.github_webhook_secret:
+    db_user = current_user_data["db_user"]
+
+    if not db_user.github_webhook_secret:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No webhook secret configured. Generate one using POST /api/v1/webhook/secret/generate/me",
         )
-    
+
     body = await request.body()
-    
+
     signature = hmac.new(
-        user.github_webhook_secret.encode(),
+        db_user.github_webhook_secret.encode(),
         body,
         hashlib.sha256,
     ).hexdigest()
-    
+
     payload_hash = hashlib.sha256(body).hexdigest()
-    
+
     logger.info(
         "webhook_test_signature_generated_authenticated",
-        user_id=user.user_id,
+        user_id=db_user.user_id,
         payload_size=len(body),
         signature_prefix=signature[:16] + "...",
     )
-    
+
     base_url = settings.api_url if hasattr(settings, 'api_url') else "https://devflowfix-new-production.up.railway.app"
-    webhook_url = f"{base_url}/api/v1/webhook/github/{user.user_id}"
-    
+    webhook_url = f"{base_url}/api/v1/webhook/github/{db_user.user_id}"
+
     return {
         "success": True,
         "user": {
-            "user_id": user.user_id,
-            "email": user.email,
+            "user_id": db_user.user_id,
+            "email": db_user.email,
         },
         "test_results": {
             "payload_hash": payload_hash,
