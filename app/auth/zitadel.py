@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.config import get_zitadel_settings, ZitadelSettings
 from app.dependencies import get_db
-from app.adapters.database.postgres.models import UserTable
+from app.adapters.database.postgres.models import UserTable, UserDetailsTable
 
 logger = structlog.get_logger(__name__)
 
@@ -373,6 +373,14 @@ async def get_current_active_user(
             last_login_at=now,
         )
         db.add(db_user)
+
+        # Auto-create empty user_details row
+        user_details = UserDetailsTable(
+            user_id=user.sub,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(user_details)
         needs_commit = True
 
         logger.info(
@@ -420,6 +428,23 @@ async def get_current_active_user(
                 "user_synced_from_zitadel",
                 user_id=user.sub,
                 email=user.email,
+            )
+
+        # Ensure user_details exists for existing users (backfill)
+        user_details = db.query(UserDetailsTable).filter(
+            UserDetailsTable.user_id == user.sub
+        ).first()
+        if not user_details:
+            user_details = UserDetailsTable(
+                user_id=user.sub,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(user_details)
+            needs_commit = True
+            logger.info(
+                "user_details_backfilled",
+                user_id=user.sub,
             )
 
     # Only commit if something changed
