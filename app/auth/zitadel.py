@@ -412,9 +412,13 @@ async def get_current_active_user(
             fields_updated = True
 
         # Throttle last_login updates (only every 5 minutes)
+        # Handle timezone-naive datetimes from database
+        last_login = db_user.last_login_at
+        if last_login is not None and last_login.tzinfo is None:
+            last_login = last_login.replace(tzinfo=timezone.utc)
         should_update_last_login = (
-            db_user.last_login_at is None or
-            (now - db_user.last_login_at) > LAST_LOGIN_UPDATE_INTERVAL
+            last_login is None or
+            (now - last_login) > LAST_LOGIN_UPDATE_INTERVAL
         )
 
         if should_update_last_login:
