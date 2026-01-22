@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         version=settings.version,
         database_url=settings.database_url.split("@")[-1],
     )
-    
+
     try:
         engine = get_engine()
         with engine.connect() as conn:
@@ -63,9 +63,13 @@ async def lifespan(app: FastAPI):
             logger.info("database_connection_verified")
     except Exception as e:
         logger.error("database_connection_failed", error=str(e))
-    
+
     yield
-    
+
+    # Cleanup: Close persistent HTTP client
+    from app.auth.zitadel import close_http_client
+    await close_http_client()
+
     logger.info("application_shutdown")
 
 
