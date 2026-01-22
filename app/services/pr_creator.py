@@ -60,12 +60,11 @@ class PRCreatorService:
     def __init__(self, github_client: Optional[GitHubClient] = None):
         """
         Initialize PR creator service.
-        
+
         Args:
             github_client: GitHub API client (optional, uses token manager)
         """
         self.github = github_client
-        self.token_manager = GitHubTokenManager()
         self._db_session = None
 
     async def create_fix_pr(
@@ -113,7 +112,15 @@ class PRCreatorService:
         base_branch = repo_info.get("branch", "main")
 
         # Get repo-specific GitHub token for THIS USER
-        token = self.token_manager.get_token(user_id, owner, repo)
+        # Create token manager with db_session for database access
+        if not db_session:
+            # Create a temporary session if not provided
+            db_gen = get_db()
+            db_session = next(db_gen)
+            self._db_session = db_session
+
+        token_manager = GitHubTokenManager(db=db_session)
+        token = token_manager.get_token(user_id, owner, repo)
         if not token:
             raise ValueError(
                 f"No GitHub token found for user {user_id} and repository {owner}/{repo}. "

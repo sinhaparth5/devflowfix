@@ -24,18 +24,18 @@ logger = structlog.get_logger(__name__)
 class GitHubTokenManager:
     """
     Securely manages GitHub access tokens for multiple repositories.
-    
+
     Features:
     - Store tokens per-repo or per-organization
     - Encrypt tokens at rest
     - Automatic token validation
     - Token rotation support
     - Audit logging
-    
+
     Example:
         ```python
-        manager = GitHubTokenManager()
-        
+        manager = GitHubTokenManager(db=db_session)
+
         # Store token for a specific repo
         manager.register_token(
             owner="myorg",
@@ -43,22 +43,23 @@ class GitHubTokenManager:
             token="ghp_xxxxx",
             description="Token for myrepo auto-fix PRs"
         )
-        
+
         # Retrieve token for PR creation
         token = manager.get_token("myorg", "myrepo")
         ```
     """
-    
-    def __init__(self, settings: Optional[Settings] = None):
+
+    def __init__(self, db=None, settings: Optional[Settings] = None):
         """
         Initialize token manager.
-        
+
         Args:
+            db: Database session (required for database operations)
             settings: Application settings with encryption key
         """
         self.settings = settings or Settings()
         self._cipher_suite = self._init_encryption()
-        self._session = None
+        self._db = db
     
     def _init_encryption(self) -> Optional[Fernet]:
         """
@@ -131,7 +132,8 @@ class GitHubTokenManager:
         Returns:
             Token record details
         """
-        from app.dependencies import get_db
+        if not self._db:
+            raise ValueError("Database session is required. Pass db to GitHubTokenManager constructor.")
 
         repository_full = f"{owner}/{repo}" if repo else f"{owner}/*"
 
@@ -143,73 +145,61 @@ class GitHubTokenManager:
             created_by=created_by,
         )
 
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            # Check if token already exists for THIS USER
-            existing = db.query(GitHubTokenTable).filter(
-                GitHubTokenTable.user_id == user_id,
-                GitHubTokenTable.repository_full == repository_full
-            ).first()
+        # Check if token already exists for THIS USER
+        existing = self._db.query(GitHubTokenTable).filter(
+            GitHubTokenTable.user_id == user_id,
+            GitHubTokenTable.repository_full == repository_full
+        ).first()
 
-            encrypted_token = self._encrypt_token(token)
+        encrypted_token = self._encrypt_token(token)
 
-            if existing:
-                # Update existing token
-                existing.token = encrypted_token
-                existing.description = description
-                existing.updated_at = datetime.now(timezone.utc)
-                existing.is_active = True
-                existing.is_valid = True
-                if scopes:
-                    existing.scopes = ",".join(scopes)
-                    existing.permissions_json = json.dumps({"scopes": scopes})
+        if existing:
+            # Update existing token
+            existing.token = encrypted_token
+            existing.description = description
+            existing.updated_at = datetime.now(timezone.utc)
+            existing.is_active = True
+            existing.is_valid = True
+            if scopes:
+                existing.scopes = ",".join(scopes)
+                existing.permissions_json = json.dumps({"scopes": scopes})
 
-                db.commit()
-
-                logger.info(
-                    "token_updated",
-                    repository=repository_full,
-                    token_id=existing.id,
-                )
-
-                return self._token_to_dict(existing)
-
-            # Create new token record
-            token_record = GitHubTokenTable(
-                id=f"token_{user_id}_{owner}_{repo or 'org'}_{datetime.now(timezone.utc).timestamp()}",
-                user_id=user_id,
-                repository_owner=owner,
-                repository_name=repo,
-                repository_full=repository_full,
-                token=encrypted_token,
-                is_encrypted=bool(self._cipher_suite),
-                description=description,
-                created_by=created_by,
-                scopes=",".join(scopes) if scopes else None,
-                permissions_json=json.dumps({"scopes": scopes}) if scopes else None,
-            )
-
-            db.add(token_record)
-            db.commit()
-            db.refresh(token_record)
+            self._db.commit()
 
             logger.info(
-                "token_registered",
+                "token_updated",
                 repository=repository_full,
-                token_id=token_record.id,
+                token_id=existing.id,
             )
 
-            return self._token_to_dict(token_record)
-        except Exception as e:
-            logger.error(
-                "token_registration_failed",
-                repository=repository_full,
-                error=str(e),
-            )
-            raise
-        finally:
-            db.close()
+            return self._token_to_dict(existing)
+
+        # Create new token record
+        token_record = GitHubTokenTable(
+            id=f"token_{user_id}_{owner}_{repo or 'org'}_{datetime.now(timezone.utc).timestamp()}",
+            user_id=user_id,
+            repository_owner=owner,
+            repository_name=repo,
+            repository_full=repository_full,
+            token=encrypted_token,
+            is_encrypted=bool(self._cipher_suite),
+            description=description,
+            created_by=created_by,
+            scopes=",".join(scopes) if scopes else None,
+            permissions_json=json.dumps({"scopes": scopes}) if scopes else None,
+        )
+
+        self._db.add(token_record)
+        self._db.commit()
+        self._db.refresh(token_record)
+
+        logger.info(
+            "token_registered",
+            repository=repository_full,
+            token_id=token_record.id,
+        )
+
+        return self._token_to_dict(token_record)
     
     def get_token(self, user_id: str, owner: str, repo: Optional[str] = None) -> Optional[str]:
         """
@@ -227,15 +217,14 @@ class GitHubTokenManager:
         Returns:
             Decrypted token or None if not found
         """
-        from app.dependencies import get_db
+        if not self._db:
+            raise ValueError("Database session is required. Pass db to GitHubTokenManager constructor.")
 
-        db_gen = get_db()
-        db = next(db_gen)
         try:
             # Try repo-specific token first
             if repo:
                 repo_specific = f"{owner}/{repo}"
-                token_record = db.query(GitHubTokenTable).filter(
+                token_record = self._db.query(GitHubTokenTable).filter(
                     GitHubTokenTable.user_id == user_id,
                     GitHubTokenTable.repository_full == repo_specific,
                     GitHubTokenTable.is_active == True,
@@ -245,7 +234,7 @@ class GitHubTokenManager:
                 if token_record:
                     # Update last used timestamp
                     token_record.last_used_at = datetime.now(timezone.utc)
-                    db.commit()
+                    self._db.commit()
 
                     logger.debug(
                         "token_retrieved",
@@ -258,7 +247,7 @@ class GitHubTokenManager:
 
             # Fall back to organization token
             org_token = f"{owner}/*"
-            token_record = db.query(GitHubTokenTable).filter(
+            token_record = self._db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.user_id == user_id,
                 GitHubTokenTable.repository_full == org_token,
                 GitHubTokenTable.is_active == True,
@@ -267,7 +256,7 @@ class GitHubTokenManager:
 
             if token_record:
                 token_record.last_used_at = datetime.now(timezone.utc)
-                db.commit()
+                self._db.commit()
 
                 logger.debug(
                     "token_retrieved_org_level",
@@ -296,8 +285,6 @@ class GitHubTokenManager:
                 error=str(e),
             )
             return None
-        finally:
-            db.close()
     
     def list_tokens(
         self,
@@ -316,12 +303,11 @@ class GitHubTokenManager:
         Returns:
             List of token records (tokens masked)
         """
-        from app.dependencies import get_db
+        if not self._db:
+            raise ValueError("Database session is required. Pass db to GitHubTokenManager constructor.")
 
-        db_gen = get_db()
-        db = next(db_gen)
         try:
-            query = db.query(GitHubTokenTable).filter(
+            query = self._db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.user_id == user_id
             )
 
@@ -353,8 +339,6 @@ class GitHubTokenManager:
         except Exception as e:
             logger.error("token_list_failed", error=str(e))
             return []
-        finally:
-            db.close()
     
     def deactivate_token(self, token_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -367,12 +351,11 @@ class GitHubTokenManager:
         Returns:
             True if deactivated, False otherwise
         """
-        from app.dependencies import get_db
+        if not self._db:
+            raise ValueError("Database session is required. Pass db to GitHubTokenManager constructor.")
 
-        db_gen = get_db()
-        db = next(db_gen)
         try:
-            query = db.query(GitHubTokenTable).filter(
+            query = self._db.query(GitHubTokenTable).filter(
                 GitHubTokenTable.id == token_id
             )
 
@@ -391,7 +374,7 @@ class GitHubTokenManager:
                 return False
 
             token_record.is_active = False
-            db.commit()
+            self._db.commit()
 
             logger.info(
                 "token_deactivated",
@@ -403,8 +386,6 @@ class GitHubTokenManager:
         except Exception as e:
             logger.error("token_deactivation_failed", token_id=token_id, error=str(e))
             return False
-        finally:
-            db.close()
     
     def validate_token(self, user_id: str, owner: str, repo: Optional[str] = None) -> bool:
         """

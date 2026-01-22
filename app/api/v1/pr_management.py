@@ -51,7 +51,7 @@ async def register_github_token(
     """
     try:
         user = current_user["user"]
-        manager = GitHubTokenManager()
+        manager = GitHubTokenManager(db=db)
 
         logger.info(
             "token_registration_request",
@@ -113,7 +113,7 @@ async def list_github_tokens(
     """
     try:
         user = current_user["user"]
-        manager = GitHubTokenManager()
+        manager = GitHubTokenManager(db=db)
 
         tokens = manager.list_tokens(user_id=user.user_id, owner=owner, active_only=active_only)
 
@@ -155,7 +155,7 @@ async def deactivate_github_token(
     """
     try:
         user = current_user["user"]
-        manager = GitHubTokenManager()
+        manager = GitHubTokenManager(db=db)
 
         # Verify token belongs to user before deactivating
         success = manager.deactivate_token(token_id, user_id=user.user_id)
