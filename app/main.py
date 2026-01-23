@@ -350,6 +350,7 @@ async def root():
                 "logs": "/api/v1/logs",
                 "jobs": "/api/v1/jobs",
                 "pr_management": "/api/v1/pr-management",
+                "events": "/api/v1/events",
             },
             "v2": {
                 "oauth": "/api/v2/oauth",
@@ -365,6 +366,7 @@ from app.api.v1.pr_management import router as pr_management_router
 from app.api.v1.user_details import router as user_details_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.jobs import router as jobs_router
+from app.api.v1.events import router as events_router
 from app.api.v2 import router as v2_router
 
 # Note: Auth is now handled by Zitadel OIDC (see app/auth/)
@@ -412,6 +414,12 @@ app.include_router(
 )
 
 app.include_router(
+    events_router,
+    prefix="/api/v1",
+    tags=["Events"],
+)
+
+app.include_router(
     v2_router,
     prefix="/api",
 )
@@ -427,6 +435,7 @@ logger.info(
         "/api/v1/user-details",
         "/api/v1/logs",
         "/api/v1/jobs",
+        "/api/v1/events",
         "/api/v2/oauth",
     ],
     webhook_endpoints=[

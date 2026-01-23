@@ -891,3 +891,51 @@ class WorkflowRunTable(SQLModel, table=True):
         Index('idx_wfrun_incident', 'incident_id'),
         Index('idx_wfrun_status', 'status', 'conclusion'),
     )
+
+
+class EventColor(str, enum.Enum):
+    """Event color options for calendar display."""
+    DANGER = "danger"
+    PRIMARY = "primary"
+    SUCCESS = "success"
+    WARNING = "warning"
+
+
+class EventTable(SQLModel, table=True):
+    """
+    User Events Table
+
+    Stores calendar events for users.
+    Each event belongs to a user and has a title, color, and date range.
+    """
+    __tablename__ = "events"
+
+    # Primary Key - evt_ prefix + UUID
+    id: str = Field(primary_key=True, max_length=50)
+
+    # Foreign Key to User (owner)
+    user_id: str = Field(
+        foreign_key="users.user_id",
+        index=True,
+        max_length=50
+    )
+
+    # Event Details
+    title: str = Field(max_length=255)
+    color: EventColor = Field(default=EventColor.PRIMARY, index=True)
+
+    # Event Dates
+    start_date: datetime = Field(index=True)
+    end_date: datetime = Field(index=True)
+
+    # Optional Description
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_events_user_dates', 'user_id', 'start_date', 'end_date'),
+        Index('idx_events_user_created', 'user_id', desc('created_at')),
+    )

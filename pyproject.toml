@@ -40,4 +40,5 @@ dependencies = [
     "gunicorn>=23.0.0",
     "orjson>=3.11.5",
     "brotli>=1.2.0",
+    "cachetools>=6.2.3",
 ]

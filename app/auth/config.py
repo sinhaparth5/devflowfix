@@ -68,6 +68,40 @@ class ZitadelSettings(BaseSettings):
         description="Verify access token hash in ID token"
     )
 
+    # Management API credentials (for fetching IdP tokens)
+    # Create a Service User in Zitadel with IAM_OWNER or ORG_OWNER role
+    service_user_id: str = Field(
+        default="",
+        alias="ZITADEL_SERVICE_USER_ID",
+        description="Service user ID for Management API"
+    )
+
+    service_user_key: str = Field(
+        default="",
+        alias="ZITADEL_SERVICE_USER_KEY",
+        description="Service user private key (JSON) for Management API"
+    )
+
+    # Organization ID (required for Management API calls)
+    org_id: str = Field(
+        default="",
+        alias="ZITADEL_ORG_ID",
+        description="Zitadel Organization ID"
+    )
+
+    # IdP IDs for GitHub and GitLab (from Zitadel Console > Identity Providers)
+    github_idp_id: str = Field(
+        default="",
+        alias="ZITADEL_GITHUB_IDP_ID",
+        description="GitHub IdP ID in Zitadel"
+    )
+
+    gitlab_idp_id: str = Field(
+        default="",
+        alias="ZITADEL_GITLAB_IDP_ID",
+        description="GitLab IdP ID in Zitadel"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -97,9 +131,38 @@ class ZitadelSettings(BaseSettings):
         return f"{self.issuer.rstrip('/')}/oauth/v2/introspect"
 
     @property
+    def management_api_uri(self) -> str:
+        """Get Management API base URI."""
+        return f"{self.issuer.rstrip('/')}/management/v1"
+
+    @property
+    def auth_api_uri(self) -> str:
+        """Get Auth API base URI (for user's own data)."""
+        return f"{self.issuer.rstrip('/')}/auth/v1"
+
+    @property
     def is_configured(self) -> bool:
         """Check if Zitadel is properly configured."""
         return bool(self.issuer and self.client_id)
+
+    @property
+    def is_management_configured(self) -> bool:
+        """Check if Management API is configured for IdP token access."""
+        return bool(
+            self.issuer
+            and self.service_user_id
+            and self.service_user_key
+        )
+
+    @property
+    def has_github_idp(self) -> bool:
+        """Check if GitHub IdP is configured."""
+        return bool(self.github_idp_id)
+
+    @property
+    def has_gitlab_idp(self) -> bool:
+        """Check if GitLab IdP is configured."""
+        return bool(self.gitlab_idp_id)
 
 
 @lru_cache()

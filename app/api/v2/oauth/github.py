@@ -4,282 +4,146 @@
 """
 GitHub OAuth API Endpoints
 
-Handles GitHub OAuth 2.0 authorization flow.
+Handles GitHub OAuth via Zitadel IdP integration.
+Users authenticate via GitHub through Zitadel, and we fetch their
+GitHub access token from Zitadel's stored IdP tokens.
 """
 
-import json
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 import structlog
 
 from app.core.config import get_settings
 from app.core.schemas.oauth import (
-    OAuthAuthorizeResponse,
-    OAuthCallbackResponse,
     OAuthConnectionResponse,
-    OAuthConnectionListResponse,
     OAuthDisconnectResponse,
-    OAuthErrorResponse,
 )
 from app.dependencies import get_db
 from app.auth import get_current_active_user
-from app.services.oauth.github_oauth import GitHubOAuthProvider
+from app.auth.config import get_zitadel_settings
+from app.services.oauth.zitadel_idp import get_zitadel_idp_service, IdPToken
 from app.services.oauth.token_manager import get_token_manager
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/github", tags=["OAuth - GitHub"])
 settings = get_settings()
 
-
-def get_github_oauth_provider() -> GitHubOAuthProvider:
-    """
-    Get GitHub OAuth provider instance.
-
-    Returns:
-        GitHubOAuthProvider instance
-
-    Raises:
-        HTTPException: If GitHub OAuth is not configured
-    """
-    if not all([
-        settings.github_oauth_client_id,
-        settings.github_oauth_client_secret,
-        settings.github_oauth_redirect_uri,
-    ]):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="GitHub OAuth is not configured. Please set GITHUB_OAUTH_CLIENT_ID, "
-                   "GITHUB_OAUTH_CLIENT_SECRET, and GITHUB_OAUTH_REDIRECT_URI environment variables."
-        )
-
-    scopes = [scope.strip() for scope in settings.github_oauth_scopes.split(",")]
-
-    return GitHubOAuthProvider(
-        client_id=settings.github_oauth_client_id,
-        client_secret=settings.github_oauth_client_secret,
-        redirect_uri=settings.github_oauth_redirect_uri,
-        scopes=scopes,
-    )
-
-
 @router.post(
-    "/authorize",
-    response_model=OAuthAuthorizeResponse,
+    "/sync",
+    response_model=OAuthConnectionResponse,
     status_code=status.HTTP_200_OK,
-    summary="Initiate GitHub OAuth Flow",
-    description="Generate GitHub OAuth authorization URL and state for CSRF protection.",
+    summary="Sync GitHub Connection from Zitadel",
+    description="Fetch GitHub access token from Zitadel IdP and store it for API access.",
 )
-async def authorize_github(
+async def sync_github_connection(
     request: Request,
-    response: Response,
-    current_user_data: dict = Depends(get_current_active_user),
-) -> OAuthAuthorizeResponse:
-    """
-    Initiate GitHub OAuth authorization flow.
-
-    **Flow:**
-    1. Generate CSRF protection state
-    2. Build GitHub authorization URL
-    3. Store state in session/cookie
-    4. Return URL to frontend for redirect
-
-    **Returns:**
-    - Authorization URL to redirect user to
-    - State parameter to store in session
-    """
-    try:
-        provider = get_github_oauth_provider()
-
-        # Generate CSRF state
-        state = provider.generate_state()
-
-        # Store state and user_id together in cookie for callback
-        # Callback endpoint doesn't have JWT auth, so we need user_id in the cookie
-        cookie_data = json.dumps({
-            "state": state,
-            "user_id": current_user_data['user'].user_id
-        })
-        response.set_cookie(
-            key="oauth_state_data",
-            value=cookie_data,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=600,  # 10 minutes
-        )
-
-        # Build authorization URL
-        authorization_url = provider.build_authorization_url(state)
-
-        logger.info(
-            "github_oauth_initiated",
-            user_id=current_user_data["user"].user_id,
-            state_length=len(state),
-        )
-
-        return OAuthAuthorizeResponse(
-            authorization_url=authorization_url,
-            state=state,
-            provider="github",
-        )
-
-    except Exception as e:
-        logger.error(
-            "github_oauth_authorize_failed",
-            error=str(e),
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initiate OAuth flow: {str(e)}"
-        )
-
-
-@router.get(
-    "/callback",
-    response_model=OAuthCallbackResponse,
-    status_code=status.HTTP_200_OK,
-    summary="GitHub OAuth Callback",
-    description="Handle GitHub OAuth callback after user authorization.",
-)
-async def github_callback(
-    request: Request,
-    code: str = Query(..., description="Authorization code from GitHub"),
-    state: str = Query(..., description="CSRF protection state"),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+    current_user_data: dict = Depends(get_current_active_user),
+) -> OAuthConnectionResponse:
     """
-    Handle GitHub OAuth callback.
+    Sync GitHub OAuth connection from Zitadel.
+
+    If the user logged in via GitHub through Zitadel, this endpoint
+    retrieves their GitHub access token from Zitadel and stores it
+    for use with GitHub API operations (repo listing, webhooks, etc.).
+
+    **Prerequisites:**
+    - User must have logged in via GitHub through Zitadel at least once
+    - GitHub must be configured as an IdP in Zitadel
+    - ZITADEL_GITHUB_IDP_ID must be set
 
     **Flow:**
-    1. Validate state parameter (CSRF protection)
-    2. Exchange authorization code for access token
-    3. Fetch user info from GitHub
-    4. Encrypt and store token in database
-    5. Redirect to success page
-
-    **Query Parameters:**
-    - code: Authorization code from GitHub
-    - state: CSRF protection state
+    1. Get user's access token from request
+    2. Query Zitadel for GitHub IdP link
+    3. Fetch GitHub access token from Zitadel
+    4. Store encrypted token in oauth_connections table
 
     **Returns:**
-    - Redirect to frontend with success status
-
-    **Note:**
-    This endpoint does NOT require authentication because it's called by GitHub
-    during the OAuth redirect. User identity is retrieved from the OAuth state cookie.
+    - OAuth connection details with GitHub username
     """
-    try:
-        provider = get_github_oauth_provider()
+    user = current_user_data["user"]
+    zitadel_settings = get_zitadel_settings()
 
-        # Get stored state and user_id from cookie
-        cookie_data_str = request.cookies.get("oauth_state_data")
-
-        if not cookie_data_str:
-            logger.error("github_oauth_state_missing")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OAuth state not found. Please restart the authorization flow."
-            )
-
-        # Parse cookie data
-        try:
-            cookie_data = json.loads(cookie_data_str)
-            stored_state = cookie_data.get("state")
-            user_id = cookie_data.get("user_id")
-        except (json.JSONDecodeError, AttributeError):
-            logger.error("github_oauth_state_invalid_format")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OAuth state format. Please restart the authorization flow."
-            )
-
-        if not stored_state or not user_id:
-            logger.error("github_oauth_state_incomplete")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Incomplete OAuth state. Please restart the authorization flow."
-            )
-
-        # Validate state (CSRF protection)
-        if not provider.validate_state(state, stored_state):
-            logger.error(
-                "github_oauth_state_mismatch",
-                user_id=user_id,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid state parameter. Possible CSRF attack detected."
-            )
-
-        logger.info(
-            "github_oauth_callback_received",
-            user_id=user_id,
-            has_code=bool(code),
+    # Check if GitHub IdP is configured
+    if not zitadel_settings.github_idp_id:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="GitHub IdP is not configured in Zitadel. "
+                   "Please set ZITADEL_GITHUB_IDP_ID environment variable."
         )
 
-        # Exchange code for token
-        token_data = await provider.exchange_code_for_token(code)
-        access_token = token_data.get("access_token")
+    # Get user's Zitadel access token from the request
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization token"
+        )
 
-        if not access_token:
+    user_access_token = auth_header.replace("Bearer ", "")
+
+    try:
+        # Get GitHub token from Zitadel IdP
+        idp_service = get_zitadel_idp_service()
+        github_token = await idp_service.get_github_token(
+            user_access_token=user_access_token,
+            user_id=user.user_id,
+        )
+
+        if not github_token:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to obtain access token from GitHub"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="GitHub is not linked to your account. "
+                       "Please login via GitHub through Zitadel first."
             )
 
-        # Get user info from GitHub
-        github_user = await provider.get_user_info(access_token)
+        if not github_token.access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitHub access token not available. "
+                       "Please re-authenticate via GitHub."
+            )
 
-        # Store OAuth connection
+        # Store the token in oauth_connections table
         token_manager = get_token_manager(settings.oauth_token_encryption_key)
-
-        scopes = token_data.get("scope", "").split(",")
 
         oauth_connection = await token_manager.store_oauth_connection(
             db=db,
-            user_id=user_id,
+            user_id=user.user_id,
             provider="github",
-            provider_user_id=str(github_user["id"]),
-            provider_username=github_user["login"],
-            access_token=access_token,
-            refresh_token=None,  # GitHub OAuth tokens don't expire
-            scopes=scopes,
-            expires_at=None,  # GitHub tokens don't expire
+            provider_user_id=github_token.provider_user_id,
+            provider_username=github_token.provider_username,
+            access_token=github_token.access_token,
+            refresh_token=None,  # GitHub tokens via Zitadel don't have refresh tokens
+            scopes=github_token.scopes,
+            expires_at=github_token.expires_at,
         )
 
         db.commit()
 
         logger.info(
-            "github_oauth_success",
-            user_id=user_id,
-            github_username=github_user["login"],
+            "github_connection_synced",
+            user_id=user.user_id,
+            github_username=github_token.provider_username,
             connection_id=oauth_connection.id,
         )
 
-        # Redirect to frontend success page
-        frontend_url = settings.cors_origins.split(",")[0] if settings.cors_origins != "*" else "http://localhost:3000"
-        redirect_url = f"{frontend_url}/settings/integrations?oauth=success&provider=github&username={github_user['login']}"
-
-        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        return OAuthConnectionResponse.from_orm(oauth_connection)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(
-            "github_oauth_callback_failed",
+            "github_sync_failed",
             error=str(e),
+            user_id=user.user_id,
             exc_info=True,
         )
-
-        # Redirect to error page
-        frontend_url = settings.cors_origins.split(",")[0] if settings.cors_origins != "*" else "http://localhost:3000"
-        redirect_url = f"{frontend_url}/settings/integrations?oauth=error&provider=github&message={str(e)}"
-
-        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync GitHub connection: {str(e)}"
+        )
 
 @router.get(
     "/connection",
@@ -311,10 +175,85 @@ async def get_github_connection(
     if not connection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No GitHub OAuth connection found for this user"
+            detail="No GitHub OAuth connection found. "
+                   "Use POST /sync to sync your GitHub connection from Zitadel."
         )
 
     return OAuthConnectionResponse.from_orm(connection)
+
+@router.get(
+    "/status",
+    status_code=status.HTTP_200_OK,
+    summary="Check GitHub Connection Status",
+    description="Check if user has GitHub linked via Zitadel and if token is synced.",
+)
+async def get_github_status(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user_data: dict = Depends(get_current_active_user),
+) -> dict:
+    """
+    Check GitHub connection status.
+
+    Returns information about:
+    - Whether GitHub is linked in Zitadel
+    - Whether token is synced to DevFlowFix
+    - Token validity
+
+    **Returns:**
+    - Status information dict
+    """
+    user = current_user_data["user"]
+    zitadel_settings = get_zitadel_settings()
+
+    result = {
+        "github_idp_configured": bool(zitadel_settings.github_idp_id),
+        "linked_in_zitadel": False,
+        "synced_to_devflowfix": False,
+        "github_username": None,
+        "needs_sync": False,
+    }
+
+    if not zitadel_settings.github_idp_id:
+        return result
+
+    # Check if linked in Zitadel
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user_access_token = auth_header.replace("Bearer ", "")
+        idp_service = get_zitadel_idp_service()
+
+        try:
+            github_token = await idp_service.get_github_token(
+                user_access_token=user_access_token,
+                user_id=user.user_id,
+            )
+
+            if github_token:
+                result["linked_in_zitadel"] = True
+                result["github_username"] = github_token.provider_username
+        except Exception as e:
+            logger.warning(
+                "github_status_check_failed",
+                error=str(e),
+            )
+
+    # Check if synced in DevFlowFix
+    token_manager = get_token_manager(settings.oauth_token_encryption_key)
+    connection = await token_manager.get_oauth_connection(
+        db=db,
+        user_id=user.user_id,
+        provider="github",
+    )
+
+    if connection:
+        result["synced_to_devflowfix"] = True
+        result["github_username"] = connection.provider_username
+
+    # Determine if sync is needed
+    result["needs_sync"] = result["linked_in_zitadel"] and not result["synced_to_devflowfix"]
+
+    return result
 
 
 @router.delete(
@@ -322,7 +261,7 @@ async def get_github_connection(
     response_model=OAuthDisconnectResponse,
     status_code=status.HTTP_200_OK,
     summary="Disconnect GitHub OAuth",
-    description="Revoke and delete GitHub OAuth connection.",
+    description="Remove GitHub OAuth connection from DevFlowFix (does not unlink from Zitadel).",
 )
 async def disconnect_github(
     db: Session = Depends(get_db),
@@ -331,10 +270,13 @@ async def disconnect_github(
     """
     Disconnect GitHub OAuth.
 
+    This removes the GitHub token from DevFlowFix but does NOT unlink
+    GitHub from your Zitadel account. To fully unlink, you must also
+    remove the connection in Zitadel Console.
+
     **Actions:**
-    1. Revoke token with GitHub
-    2. Delete connection from database
-    3. Delete all associated repository connections
+    1. Deactivate connection in database
+    2. Delete all associated repository connections
 
     **Returns:**
     - Success message with disconnected connection details
@@ -355,29 +297,6 @@ async def disconnect_github(
             detail="No GitHub OAuth connection found for this user"
         )
 
-    try:
-        provider = get_github_oauth_provider()
-
-        # Get decrypted token
-        access_token = token_manager.get_decrypted_token(connection)
-
-        # Revoke token with GitHub
-        await provider.revoke_token(access_token)
-
-        logger.info(
-            "github_token_revoked",
-            user_id=user.user_id,
-            connection_id=connection.id,
-        )
-
-    except Exception as e:
-        logger.warning(
-            "github_token_revoke_failed",
-            error=str(e),
-            user_id=user.user_id,
-        )
-        # Continue with deletion even if revocation fails
-
     # Deactivate connection
     await token_manager.revoke_oauth_connection(
         db=db,
@@ -397,5 +316,6 @@ async def disconnect_github(
         success=True,
         connection_id=connection.id,
         provider="github",
-        message="GitHub OAuth connection successfully disconnected"
+        message="GitHub OAuth connection removed from DevFlowFix. "
+                "To fully unlink, also remove the connection in Zitadel Console."
     )
