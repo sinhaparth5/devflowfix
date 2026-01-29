@@ -569,8 +569,8 @@ async def receive_github_webhook(
     """
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
-    # Create application logger
-    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+    # Create application logger WITHOUT incident_id initially (will set later if it's a failure event)
+    app_logger = AppLogger(db, incident_id=None, user_id=user_id)
 
     # Log webhook received
     app_logger.webhook_received(
@@ -579,6 +579,7 @@ async def receive_github_webhook(
             "event_type": x_github_event,
             "delivery_id": x_github_delivery,
             "body_size": len(body) if body else 0,
+            "potential_incident_id": incident_id,  # Track for reference
         }
     )
 
@@ -686,14 +687,18 @@ async def receive_github_webhook(
         normalized_payload["context"] = {}
     normalized_payload["context"]["user_id"] = user_id
 
-    # Log queuing for background processing
+    # NOTE: Don't set app_logger.incident_id yet - the incident doesn't exist in DB yet!
+    # It will be created during background processing.
+
+    # Log queuing for background processing (without incident_id since incident not created yet)
     app_logger.info(
-        "Webhook queued for background processing",
+        f"Webhook queued for background processing (incident will be: {incident_id})",
         category=LogCategory.WEBHOOK,
         stage="webhook_queued",
         details={
             "source": "github",
             "event_type": x_github_event,
+            "future_incident_id": incident_id,
         }
     )
 
@@ -1106,17 +1111,17 @@ async def process_webhook_async(
                 context = payload.get("context", {})
                 repo = context.get("repository", "")
                 run_id = context.get("run_id")
-
+                
                 if repo and run_id and "/" in repo:
                     owner, repo_name = repo.split("/", 1)
                     log_extractor = GitHubLogExtractor()
-
+                    
                     workflow_logs = await log_extractor.fetch_and_parse_logs(
                         owner=owner,
                         repo=repo_name,
                         run_id=run_id
                     )
-
+                    
                     if workflow_logs:
                         payload["error_log"] = f"""GitHub Workflow Failed
 Repository: {context.get('repository', 'unknown')}
@@ -1124,7 +1129,7 @@ Branch: {context.get('branch', 'unknown')}
 
 --- EXTRACTED ERRORS ---
 {workflow_logs}"""
-
+                        
                         logger.info(
                             "github_logs_added_to_payload",
                             incident_id=incident_id,
@@ -1143,12 +1148,12 @@ Branch: {context.get('branch', 'unknown')}
                     incident_id=incident_id,
                     error=str(e),
                 )
-
+        
         result = await event_processor.process(
             payload=payload,
             source=source,
         )
-
+        
         logger.info(
             "webhook_processing_complete",
             incident_id=result.incident_id,
@@ -1156,7 +1161,7 @@ Branch: {context.get('branch', 'unknown')}
             outcome=result.outcome.value,
             user_id=user_id,
         )
-
+        
     except Exception as e:
         logger.error(
             "webhook_processing_failed",
@@ -1207,6 +1212,7 @@ def process_webhook_sync(
             loop.close()
         except Exception:
             pass
+
 
 @router.post(
     "/webhook/secret/generate/me",
