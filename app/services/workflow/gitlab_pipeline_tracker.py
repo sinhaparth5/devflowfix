@@ -356,7 +356,6 @@ class GitLabPipelineTracker:
 
             # Link incident to workflow run
             workflow_run.incident_id = incident.incident_id
-            db.add(workflow_run)
             db.flush()
 
             logger.info(

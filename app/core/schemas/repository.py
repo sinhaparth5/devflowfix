@@ -9,11 +9,13 @@ Pydantic models for repository management endpoints.
 
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GitHubRepositoryResponse(BaseModel):
     """GitHub repository information from API."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(..., description="GitHub repository ID")
     name: str = Field(..., description="Repository name")
@@ -36,10 +38,6 @@ class GitHubRepositoryResponse(BaseModel):
     pushed_at: Optional[datetime] = Field(None, description="Last push time")
     permissions: Optional[dict] = Field(None, description="User permissions on repository")
 
-    class Config:
-        from_attributes = True
-
-
 class RepositoryListResponse(BaseModel):
     """List of repositories from OAuth provider."""
 
@@ -59,7 +57,7 @@ class ConnectRepositoryRequest(BaseModel):
     repository_full_name: str = Field(
         ...,
         description="Full repository name (owner/repo)",
-        example="octocat/Hello-World"
+        json_schema_extra={"example": "octocat/Hello-World"},
     )
     auto_pr_enabled: bool = Field(
         default=True,
@@ -78,6 +76,8 @@ class ConnectRepositoryRequest(BaseModel):
 class RepositoryConnectionResponse(BaseModel):
     """Repository connection information."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str = Field(..., description="Connection ID")
     oauth_connection_id: str = Field(..., description="Associated OAuth connection ID")
     repository_id: str = Field(..., description="GitHub repository ID")
@@ -94,10 +94,6 @@ class RepositoryConnectionResponse(BaseModel):
     auto_pr_enabled: bool = Field(..., description="Whether auto PR is enabled")
     created_at: datetime = Field(..., description="Connection creation time")
     last_event_at: Optional[datetime] = Field(None, description="Last webhook event time")
-
-    class Config:
-        from_attributes = True
-
 
 class RepositoryConnectionListResponse(BaseModel):
     """List of connected repositories."""
@@ -138,7 +134,7 @@ class WebhookSetupRequest(BaseModel):
     repository_full_name: str = Field(
         ...,
         description="Full repository name (owner/repo)",
-        example="octocat/Hello-World"
+        json_schema_extra={"example": "octocat/Hello-World"},
     )
     events: List[str] = Field(
         default=["workflow_run", "pull_request", "push"],

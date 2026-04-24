@@ -10,7 +10,7 @@ These are simplified schemas since Zitadel handles most user management.
 
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserProfileResponse(BaseModel):
@@ -39,10 +39,6 @@ class UserProfileResponse(BaseModel):
 
     # User preferences (stored locally)
     preferences: dict = Field(default_factory=dict, description="User preferences")
-
-    class Config:
-        from_attributes = True
-
 
 class UserPreferencesUpdate(BaseModel):
     """
@@ -102,3 +98,4 @@ class UserStatsResponse(BaseModel):
     total_prs_created: int = Field(default=0, description="PRs created")
     prs_merged: int = Field(default=0, description="PRs merged")
     member_since_days: int = Field(default=0, description="Days since registration")
+    model_config = ConfigDict(from_attributes=True)

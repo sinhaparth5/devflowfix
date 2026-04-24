@@ -9,11 +9,13 @@ Pydantic models for GitHub workflow run events and tracking.
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WorkflowRunResponse(BaseModel):
     """Workflow run information."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="Workflow run tracking ID")
     incident_id: Optional[str] = Field(None, description="Associated incident ID")
@@ -33,10 +35,6 @@ class WorkflowRunResponse(BaseModel):
     run_url: Optional[str] = Field(None, description="GitHub run URL")
     created_at: datetime = Field(..., description="Tracking record creation time")
     updated_at: datetime = Field(..., description="Tracking record update time")
-
-    class Config:
-        from_attributes = True
-
 
 class WorkflowRunListResponse(BaseModel):
     """List of workflow runs."""
@@ -62,28 +60,26 @@ class WorkflowRunStatsResponse(BaseModel):
 class GitHubWorkflowRunEvent(BaseModel):
     """GitHub workflow_run event payload."""
 
+    model_config = ConfigDict(extra="allow")
+
     action: str = Field(..., description="Event action (completed, requested, in_progress)")
     workflow_run: Dict[str, Any] = Field(..., description="Workflow run object")
     repository: Dict[str, Any] = Field(..., description="Repository object")
     sender: Dict[str, Any] = Field(..., description="User who triggered the event")
 
-    class Config:
-        extra = "allow"
-
-
 class WorkflowJobEvent(BaseModel):
     """GitHub workflow_job event payload."""
+
+    model_config = ConfigDict(extra="allow")
 
     action: str = Field(..., description="Event action (queued, in_progress, completed)")
     workflow_job: Dict[str, Any] = Field(..., description="Workflow job object")
     repository: Dict[str, Any] = Field(..., description="Repository object")
 
-    class Config:
-        extra = "allow"
-
-
 class WorkflowRunDetails(BaseModel):
     """Detailed workflow run information from GitHub API."""
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
 
     id: int = Field(..., description="GitHub run ID")
     name: str = Field(..., description="Workflow name")
@@ -115,13 +111,10 @@ class WorkflowRunDetails(BaseModel):
     head_commit: Dict[str, Any] = Field(..., description="Head commit object")
     repository: Dict[str, Any] = Field(..., description="Repository object")
 
-    class Config:
-        from_attributes = True
-        extra = "allow"
-
-
 class WorkflowJobDetails(BaseModel):
     """Workflow job details from GitHub API."""
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
 
     id: int = Field(..., description="Job ID")
     run_id: int = Field(..., description="Workflow run ID")
@@ -142,11 +135,6 @@ class WorkflowJobDetails(BaseModel):
     runner_name: Optional[str] = Field(None, description="Runner name")
     runner_group_id: Optional[int] = Field(None, description="Runner group ID")
     runner_group_name: Optional[str] = Field(None, description="Runner group name")
-
-    class Config:
-        from_attributes = True
-        extra = "allow"
-
 
 class WorkflowFailureAnalysis(BaseModel):
     """Analysis of workflow failure."""

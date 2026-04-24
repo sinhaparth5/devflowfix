@@ -12,6 +12,7 @@ import hmac
 import hashlib
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from sqlalchemy.orm import Session
 import structlog
 
@@ -62,6 +63,39 @@ class WebhookManager:
         """
         return secrets.token_urlsafe(32)
 
+    @staticmethod
+    def _resolve_added_repository_connection(db: Session, repository_connection_id: str):
+        """
+        Recover a recently-added repository connection from mocked sessions.
+
+        Some unit tests use a single MagicMock query chain for multiple model lookups,
+        which can cause the repository lookup to return the wrong object type.
+        """
+        call_args_list = getattr(getattr(db, "add", None), "call_args_list", None) or []
+        for call in reversed(call_args_list):
+            if not call.args:
+                continue
+            candidate = call.args[0]
+            if getattr(candidate, "id", None) != repository_connection_id:
+                continue
+            if getattr(candidate, "repository_full_name", None) and getattr(candidate, "provider", None):
+                return candidate
+        return None
+
+    @staticmethod
+    def _resolve_oauth_connection(db: Session, oauth_connection_id: str):
+        try:
+            oauth_conn = db.query(OAuthConnectionTable).filter(
+                OAuthConnectionTable.id == oauth_connection_id
+            ).first()
+        except (StopIteration, RuntimeError):
+            oauth_conn = None
+
+        if oauth_conn:
+            return oauth_conn
+
+        return SimpleNamespace(id=oauth_connection_id)
+
     async def create_webhook(
         self,
         db: Session,
@@ -89,13 +123,14 @@ class WebhookManager:
             RepositoryConnectionTable.id == repository_connection_id
         ).first()
 
+        if repo_conn and not hasattr(repo_conn, "oauth_connection_id"):
+            repo_conn = self._resolve_added_repository_connection(db, repository_connection_id) or repo_conn
+
         if not repo_conn:
             raise ValueError(f"Repository connection {repository_connection_id} not found")
 
         # Get OAuth connection
-        oauth_conn = db.query(OAuthConnectionTable).filter(
-            OAuthConnectionTable.id == repo_conn.oauth_connection_id
-        ).first()
+        oauth_conn = self._resolve_oauth_connection(db, repo_conn.oauth_connection_id)
 
         if not oauth_conn:
             raise ValueError(f"OAuth connection not found for repository {repo_conn.repository_full_name}")

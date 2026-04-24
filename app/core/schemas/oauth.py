@@ -9,7 +9,7 @@ Pydantic models for OAuth endpoints.
 
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 class OAuthAuthorizeResponse(BaseModel):
     """Response from OAuth authorization endpoint."""
@@ -30,6 +30,8 @@ class OAuthAuthorizeResponse(BaseModel):
 class OAuthConnectionResponse(BaseModel):
     """OAuth connection information."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str = Field(..., description="Connection ID")
     provider: str = Field(..., description="Provider name (github, gitlab)")
     provider_username: str = Field(..., description="Username from provider")
@@ -38,10 +40,6 @@ class OAuthConnectionResponse(BaseModel):
     is_active: bool = Field(..., description="Whether connection is active")
     created_at: datetime = Field(..., description="Connection creation time")
     last_used_at: Optional[datetime] = Field(None, description="Last time connection was used")
-
-    class Config:
-        from_attributes = True
-
 
 class OAuthConnectionListResponse(BaseModel):
     """List of OAuth connections."""
@@ -90,6 +88,8 @@ class OAuthErrorResponse(BaseModel):
 class GitHubUserInfo(BaseModel):
     """GitHub user information."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int = Field(..., description="GitHub user ID")
     login: str = Field(..., description="GitHub username")
     name: Optional[str] = Field(None, description="Full name")
@@ -101,12 +101,10 @@ class GitHubUserInfo(BaseModel):
     location: Optional[str] = Field(None, description="Location")
     bio: Optional[str] = Field(None, description="Bio")
 
-    class Config:
-        from_attributes = True
-
-
 class GitLabUserInfo(BaseModel):
     """GitLab user information."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int = Field(..., description="GitLab user ID")
     username: str = Field(..., description="GitLab username")
@@ -117,5 +115,3 @@ class GitLabUserInfo(BaseModel):
     state: str = Field(default="active", description="Account state")
     bio: Optional[str] = Field(None, description="Bio")
 
-    class Config:
-        from_attributes = True
