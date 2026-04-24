@@ -24,6 +24,7 @@ dependencies = [
     "pygithub>=2.8.1",
     "pyotp>=2.9.0",
     "pytest>=9.0.1",
+    "pytest-asyncio>=1.2.0",
     "python-dateutil>=2.9.0.post0",
     "python-dotenv>=1.2.1",
     "python-jose[cryptography]>=3.5.0",
@@ -42,3 +43,6 @@ dependencies = [
     "brotli>=1.2.0",
     "cachetools>=6.2.3",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

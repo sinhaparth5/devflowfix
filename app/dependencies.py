@@ -145,7 +145,7 @@ class ServiceContainer:
                 logger.warning("slack_token_not_configured")
         return self._notification_service
     
-    def get_analyzer_service(self, db: Session):
+    def get_analyzer_service(self, db: Optional[Session] = None):
         if self._analyzer_service is None:
             if self.llm_adapter:
                 from app.services.analyzer import AnalyzerService
@@ -153,7 +153,7 @@ class ServiceContainer:
                     settings=settings,
                     llm_client=self.llm_adapter,
                     embedder_service=self.embedding_adapter,
-                    retriever_service=self.get_retriever_service(db)
+                    retriever_service=self.get_retriever_service(db),
                 )
             else:
                 logger.warning("analyzer_service_not_available_no_llm")
@@ -180,7 +180,7 @@ class ServiceContainer:
             self._remediator_service = RemediatorService(settings=settings)
         return self._remediator_service
     
-    def get_retriever_service(self, db: Session):
+    def get_retriever_service(self, db: Optional[Session] = None):
         """
         Get RetriverService with vector repository support
         
@@ -196,6 +196,14 @@ class ServiceContainer:
 
         from app.services.retriever import RetrieverService
         from app.adapters.database.postgres.repositories.vector import VectorRepository
+
+        if db is None:
+            if self._retriever_service is None:
+                self._retriever_service = RetrieverService(
+                    embedding_adapter=self.embedding_adapter,
+                    vector_repository=None,
+                )
+            return self._retriever_service
 
         vector_repo = VectorRepository(db)
 
@@ -268,9 +276,9 @@ def get_event_processor(db: Session = Depends(get_db)):
     )
 
 
-def get_analyzer_service():
+def get_analyzer_service(db: Optional[Session] = None):
     container = get_service_container()
-    return container.get_analyzer_service()
+    return container.get_analyzer_service(db)
 
 
 def get_classifier_service():
@@ -282,9 +290,9 @@ def get_remediator_service():
     return container.get_remediator_service()
 
 
-def get_retriever_service():
+def get_retriever_service(db: Optional[Session] = None):
     container = get_service_container()
-    return container.get_retriever_service()
+    return container.get_retriever_service(db)
 
 
 def get_decision_service():

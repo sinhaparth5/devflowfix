@@ -4,7 +4,7 @@
 
 ## What It Does
 
-DevFlowFix automatically fixes 75% of deployment failures in under 8 minutes by:
+DevFlowFix is designed to automate CI/CD failure analysis and remediation by:
 - Receiving webhooks from GitHub Actions, ArgoCD, and Kubernetes
 - Analyzing failures using AI (NVIDIA NIM) and RAG
 - Executing safe remediation actions (workflow reruns, pod restarts, sync operations)
@@ -49,7 +49,7 @@ Webhook → Lambda → AI Analysis → RAG Retrieval → Decision Engine → Rem
 
 ## Key Features
 
-- ✅ **Autonomous**: 75% auto-resolution rate
+- ✅ **Autonomous**: AI-assisted detection, analysis, and remediation
 - ✅ **Safe**: Confidence scoring + blast radius limits + rollback
 - ✅ **Observable**: CloudWatch metrics + X-Ray tracing
 - ✅ **Extensible**: Pluggable remediators and strategies
@@ -63,5 +63,3 @@ Webhook → Lambda → AI Analysis → RAG Retrieval → Decision Engine → Rem
 ## License
 
 GNU 3
-
-TEST 

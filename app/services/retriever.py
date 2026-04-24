@@ -146,7 +146,7 @@ class RetrieverService:
         context_items = []
         for item in similar[:max_context_items]:
             context_items.append({
-                "incident_id": item.get("incidents_id"),
+                "incident_id": item.get("incident_id"),
                 "similarity": item.get("similarity"),
                 "root_cause": item.get("root_cause"),
                 "remediation_actions": item.get("remediation_actions", []),
@@ -154,16 +154,22 @@ class RetrieverService:
                 "resolution_time": item.get("resolution_time_seconds"),
             })
 
-            success_count = sum(1 for item in context_items if item.get("outcome") == "success")
-            avg_similarity = sum(item.get("similarity", 0) for item in context_items) / len(context_items)
+        success_count = sum(1 for item in context_items if item.get("outcome") == "success")
+        avg_similarity = (
+            sum(item.get("similarity", 0) for item in context_items) / len(context_items)
+            if context_items
+            else 0
+        )
 
-            return {
-                "similar_incidents": context_items,
-                "total_found": len(similar),
-                "success_rate": success_count / len(context_items) if context_items else 0,
-                "average_similarity": avg_similarity,
-                "has_high_confidence_match": any(item.get("similarity", 0) > 0.9 for item in context_items),
-            }
+        return {
+            "similar_incidents": context_items,
+            "total_found": len(similar),
+            "success_rate": success_count / len(context_items) if context_items else 0,
+            "average_similarity": avg_similarity,
+            "has_high_confidence_match": any(
+                item.get("similarity", 0) > 0.9 for item in context_items
+            ),
+        }
         
     async def find_related_pattern(
             self,
