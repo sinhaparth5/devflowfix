@@ -424,19 +424,18 @@ class PRCreatorService:
     ) -> List[str]:
         """Apply code changes to files."""
         changed_files = []
-
-        print(f"\n🔍 DEBUG: _apply_code_changes called")
-        print(f"   Total code changes to apply: {len(code_changes)}")
-        print(f"   Branch: {branch}")
+        logger.info(
+            "apply_code_changes_start",
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            total_changes=len(code_changes),
+        )
 
         if not code_changes:
-            print(f"   ⚠️  WARNING: No code changes provided!")
             return changed_files
 
         for idx, change in enumerate(code_changes, 1):
-            print(f"\n   📄 Processing change #{idx}/{len(code_changes)}")
-            print(f"      Raw change data: {change}")  # Show full structure
-
             file_path = change.get("file_path")
             fixed_code = change.get("fixed_code")
             current_code = change.get("current_code")
@@ -448,24 +447,22 @@ class PRCreatorService:
                 try:
                     line_number = int(line_number_raw) if isinstance(line_number_raw, str) else line_number_raw
                 except (ValueError, TypeError):
-                    print(f"      ⚠️  Invalid line_number: {line_number_raw}")
+                    logger.warning(
+                        "invalid_line_number_for_code_change",
+                        file=file_path,
+                        raw_line_number=line_number_raw,
+                    )
                     line_number = None
-
-            print(f"      File: {file_path}")
-            print(f"      Has fixed_code: {bool(fixed_code)}")
-            print(f"      fixed_code value: {repr(fixed_code)}")  # Show actual value
-            print(f"      Has current_code: {bool(current_code)}")
-            print(f"      Line number: {line_number} (raw: {line_number_raw})")
 
             # Check if file_path exists and fixed_code is not None (empty string is valid - means delete)
             if not file_path or fixed_code is None:
-                print(f"      ❌ SKIPPING: Missing file_path or fixed_code is None")
-                print(f"      Available keys in change: {list(change.keys())}")
+                logger.warning(
+                    "skipping_invalid_code_change",
+                    file=file_path,
+                    has_fixed_code=fixed_code is not None,
+                    available_keys=list(change.keys()),
+                )
                 continue
-
-            # Empty string for fixed_code means "delete this line"
-            if fixed_code == "" and line_number:
-                print(f"      ℹ️  Empty fixed_code detected - will DELETE line {line_number}")
 
             try:
                 # Fetch the current file content from the repository
@@ -593,9 +590,6 @@ class PRCreatorService:
 
                 # Update the file in the repository
                 commit_message = f"fix: {change.get('explanation', 'Auto-fix code issue')}"
-                print(f"      🔨 Committing change to {file_path}...")
-                print(f"      Commit message: {commit_message}")
-                print(f"      Content length: {len(updated_content)} chars")
 
                 await github_client.create_or_update_file(
                     owner=owner,
@@ -607,7 +601,6 @@ class PRCreatorService:
                     sha=sha,
                 )
 
-                print(f"      ✅ Successfully committed {file_path}")
                 changed_files.append(file_path)
 
                 logger.info(
@@ -615,10 +608,10 @@ class PRCreatorService:
                     owner=owner,
                     repo=repo,
                     file=file_path,
+                    change_index=idx,
                 )
 
             except Exception as e:
-                print(f"      ❌ ERROR applying change to {file_path}: {str(e)}")
                 logger.error(
                     "code_change_failed",
                     file=file_path,
@@ -626,8 +619,14 @@ class PRCreatorService:
                     exc_info=True,
                 )
 
-        print(f"\n   📊 SUMMARY: Successfully committed {len(changed_files)} file(s)")
-        print(f"   Files changed: {changed_files}")
+        logger.info(
+            "apply_code_changes_complete",
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            changed_files=changed_files,
+            changed_count=len(changed_files),
+        )
         return changed_files
     
     async def _apply_config_changes(
