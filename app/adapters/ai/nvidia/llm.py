@@ -12,6 +12,7 @@ import structlog
 from app.adapters.ai.nvidia.client import NVIDIALLMClient
 from app.adapters.ai.nvidia.prompts import (
     SYSTEM_PROMPT,
+    SOLUTION_SYSTEM_PROMPT,
     build_classification_prompt,
     build_root_cause_analysis_prompt,
     build_remediation_validation_prompt,
@@ -194,6 +195,7 @@ class LLMAdapter:
                 prompt=prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
+                system_prompt=SYSTEM_PROMPT,
             )
 
             # Extract text
@@ -496,6 +498,7 @@ class LLMAdapter:
                 prompt=prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
+                system_prompt=SYSTEM_PROMPT,
             )
 
             text = self.client.extract_text(response)
@@ -565,6 +568,7 @@ class LLMAdapter:
                 prompt=prompt,
                 max_tokens=1000,
                 temperature=self.temperature,
+                system_prompt=SYSTEM_PROMPT,
             )
 
             text = self.client.extract_text(response)
@@ -666,8 +670,10 @@ class LLMAdapter:
         try:
             response = await self.client.complete(
                 prompt=prompt,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
+                max_tokens=min(self.max_tokens, 1200),
+                temperature=min(self.temperature, 0.1),
+                system_prompt=SOLUTION_SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
             )
 
             text = self.client.extract_text(response)

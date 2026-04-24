@@ -519,6 +519,10 @@ class GitHubClient:
         owner: str,
         repo: str,
         run_id: int,
+        *,
+        filter: str = "latest",
+        per_page: int = 100,
+        page: int = 1,
     ) -> List[Dict[str, Any]]:
         """
         List jobs for a workflow run.
@@ -532,7 +536,14 @@ class GitHubClient:
             List of jobs
         """
         endpoint = f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
-        response = await self.get(endpoint)
+        response = await self.get(
+            endpoint,
+            params={
+                "filter": filter,
+                "per_page": per_page,
+                "page": page,
+            },
+        )
         return response.get("jobs", [])
     
     async def get_job(
@@ -554,6 +565,51 @@ class GitHubClient:
         """
         endpoint = f"/repos/{owner}/{repo}/actions/jobs/{job_id}"
         return await self.get(endpoint)
+
+    async def list_check_run_annotations(
+        self,
+        owner: str,
+        repo: str,
+        check_run_id: int,
+        *,
+        per_page: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        List annotations for a check run.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            check_run_id: Check run ID
+            per_page: Page size for pagination
+
+        Returns:
+            List of annotation objects
+        """
+        annotations: List[Dict[str, Any]] = []
+        page = 1
+
+        while True:
+            endpoint = f"/repos/{owner}/{repo}/check-runs/{check_run_id}/annotations"
+            page_items = await self.get(
+                endpoint,
+                params={
+                    "per_page": per_page,
+                    "page": page,
+                },
+            )
+
+            if not isinstance(page_items, list) or not page_items:
+                break
+
+            annotations.extend(page_items)
+
+            if len(page_items) < per_page:
+                break
+
+            page += 1
+
+        return annotations
     
     async def download_job_logs(
         self,

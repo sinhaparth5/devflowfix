@@ -47,10 +47,19 @@ async def test_llm_complete_calls_openai_compatible_chat_endpoint() -> None:
         headers=client._get_headers(),
     )
 
-    response = await client.complete(prompt="analyze this", max_tokens=123, temperature=0.2)
+    response = await client.complete(
+        prompt="analyze this",
+        max_tokens=123,
+        temperature=0.2,
+        system_prompt="system instructions",
+        response_format={"type": "json_object"},
+    )
 
     assert captured["url"] == "https://integrate.api.nvidia.com/v1/chat/completions"
-    assert '"model":' in str(captured["payload"])
+    payload = json.loads(str(captured["payload"]))
+    assert payload["messages"][0] == {"role": "system", "content": "system instructions"}
+    assert payload["messages"][1] == {"role": "user", "content": "analyze this"}
+    assert payload["response_format"] == {"type": "json_object"}
     assert response["choices"][0]["message"]["content"] == '{"category":"test"}'
     await client.close()
 

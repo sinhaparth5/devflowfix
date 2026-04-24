@@ -17,6 +17,79 @@ You have deep knowledge of:
 
 Analyze incidents carefully and provide structured responses in JSON format."""
 
+SOLUTION_SYSTEM_PROMPT = """You are a senior CI/CD remediation assistant.
+Return only valid JSON.
+Prefer the smallest correct fix.
+Do not invent file paths, line numbers, code, settings, or commands.
+Use only evidence from the supplied incident data.
+If evidence is insufficient, leave uncertain fields empty instead of guessing."""
+
+
+def _truncate_text(value: Optional[str], limit: int) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "...[truncated]"
+
+
+def _summarize_context(context: Dict[str, Any]) -> str:
+    priority_keys = [
+        "repository",
+        "branch",
+        "workflow",
+        "event_type",
+        "run_id",
+        "check_run_id",
+        "commit_sha",
+        "details_url",
+        "logs_url",
+    ]
+    lines: List[str] = []
+
+    for key in priority_keys:
+        value = context.get(key)
+        if value:
+            lines.append(f"- {key}: {_truncate_text(str(value), 160)}")
+
+    changed_files = context.get("changed_files") or []
+    if changed_files:
+        lines.append("- changed_files:")
+        for path in changed_files[:10]:
+            lines.append(f"  - {_truncate_text(str(path), 160)}")
+        if len(changed_files) > 10:
+            lines.append(f"  - ... and {len(changed_files) - 10} more")
+
+    error_files = context.get("error_files") or {}
+    if error_files:
+        lines.append("- structured_error_files:")
+        for file_path, file_errors in list(error_files.items())[:5]:
+            lines.append(f"  - file: {_truncate_text(str(file_path), 160)}")
+            for error in file_errors[:3]:
+                message = _truncate_text(str(error.get('message') or ""), 180)
+                line = error.get("line")
+                error_type = error.get("error_type") or "error"
+                detail = f"{error_type}: {message}"
+                if line:
+                    detail += f" (line {line})"
+                lines.append(f"    - {detail}")
+        if len(error_files) > 5:
+            lines.append(f"  - ... and {len(error_files) - 5} more files")
+
+    extras = []
+    for key, value in context.items():
+        if key in priority_keys or key in {"changed_files", "error_files"}:
+            continue
+        if value in (None, "", [], {}, ()):
+            continue
+        extras.append((key, value))
+
+    for key, value in extras[:6]:
+        lines.append(f"- {key}: {_truncate_text(str(value), 160)}")
+
+    return "\n".join(lines) if lines else "- none"
+
 # Classification prompt template
 CLASSIFICATION_PROMPT = """Analyze the following CI/CD incident and provide a structured classification.
 
@@ -363,31 +436,33 @@ def build_solution_generation_prompt(
     Returns:
         Formatted prompt string for solution generation
     """
-    context_lines = "\n".join([f"- {k}: {v}" for k, v in context.items() if v])
+    context_lines = _summarize_context(context)
     
     code_section = ""
     if repository_code:
-        code_section = f"\n## Relevant Repository Code\n```\n{repository_code[:2000]}\n```\n"
+        code_section = f"\n## Relevant Repository Code\n```\n{_truncate_text(repository_code, 1200)}\n```\n"
+
+    trimmed_error_log = _truncate_text(error_log, 1400)
+    trimmed_root_cause = _truncate_text(root_cause, 220)
     
-    prompt = f"""You are a CI/CD expert. Analyze the following incident and provide ONLY a valid JSON solution with NO other text.
+    prompt = f"""Task: propose the smallest reliable fix for this CI/CD failure.
 
-## INCIDENT DETAILS
+Return only valid JSON. No prose. No markdown.
 
-**Failure Type:** {failure_type}
-**Root Cause:** {root_cause}
+## Incident
+- failure_type: {failure_type}
+- root_cause: {trimmed_root_cause}
 
-**Error Log:**
+## Error Summary
 ```
-{error_log[:2000]}
+{trimmed_error_log}
 ```
 
-**Context:**
+## Context
 {context_lines}
 {code_section}
 
-## INSTRUCTIONS
-
-Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the following structure:
+## Required JSON schema
 
 {{
   "immediate_fix": {{
@@ -424,23 +499,17 @@ Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the foll
   ]
 }}
 
-IMPORTANT:
-- Return ONLY valid JSON with NO markdown code blocks
-- Do NOT include explanations outside the JSON
-- All fields should be strings except arrays
-- If a section doesn't apply, use empty array [] or null
-- Ensure all JSON is valid and properly escaped
-
-FOR CODE_CHANGES:
-- EXTRACT file_path from the error log (look for patterns like "src/file.ts:42", "at /path/to/file.py line 10", "Error in src/hooks/useProducts.ts")
-- EXTRACT line_number from the error message (look for ":42:", "line 42", "at line 42") - MUST be an INTEGER or STRING of integer
-- DO NOT use example values (like 42) - use the ACTUAL line number from the error
-- For line_number, provide either an integer OR string of integer (e.g. 42 or "42")
-- For fixes that DELETE code (like removing unused variables), use EMPTY STRING for fixed_code: ""
-- For current_code, include the actual problematic code from the error message
-- FOCUS ONLY on files in the changed_files list from context
-- The fix should work for ANY programming language (Python, JavaScript, Java, Go, Ruby, etc.)
-
-Now generate the solution:"""
+## Rules
+- Be concise and deterministic.
+- Prefer one good fix over many speculative fixes.
+- If the evidence points to a config issue, leave code_changes as [].
+- If the evidence points to a code issue, only include files supported by the error summary or structured_error_files.
+- If changed_files is present, prioritize those files and avoid unrelated files.
+- Do not invent line numbers. If unknown, use null.
+- Use current_code only when it is directly supported by the provided input.
+- For delete-only fixes, use an empty string for fixed_code.
+- If a section does not apply, use [] or null.
+- Keep each text field short and actionable.
+"""
     
     return prompt

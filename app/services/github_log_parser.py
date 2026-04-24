@@ -3,7 +3,7 @@
 
 import re
 import hashlib
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 from dataclasses import dataclass, field
 from collections import defaultdict
 import structlog
@@ -63,6 +63,114 @@ class GitHubLogParser:
             (re.compile(pattern, re.IGNORECASE), error_type, severity)
             for pattern, error_type, severity in self.ERROR_PATTERNS
         ]
+
+    @staticmethod
+    def extract_check_run_id(job: Dict[str, Any]) -> Optional[int]:
+        check_run_url = job.get("check_run_url")
+        if not isinstance(check_run_url, str):
+            return None
+
+        match = re.search(r"/check-runs/(\d+)", check_run_url)
+        if not match:
+            return None
+
+        return int(match.group(1))
+
+    @staticmethod
+    def extract_failed_steps(job: Dict[str, Any]) -> List[Dict[str, Any]]:
+        failed_steps = []
+        for step in job.get("steps") or []:
+            if step.get("conclusion") != "failure":
+                continue
+            failed_steps.append(
+                {
+                    "name": step.get("name", "Unknown step"),
+                    "number": step.get("number"),
+                    "started_at": step.get("started_at"),
+                    "completed_at": step.get("completed_at"),
+                }
+            )
+        return failed_steps
+
+    def extract_annotation_errors(
+        self,
+        annotations: List[Dict[str, Any]],
+        *,
+        job_name: str,
+        failed_steps: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[ErrorBlock]:
+        errors: List[ErrorBlock] = []
+        seen_hashes: Set[str] = set()
+        step_name = job_name
+
+        if failed_steps:
+            step_name = f"{job_name} / {failed_steps[0]['name']}"
+
+        for annotation in annotations:
+            level = annotation.get("annotation_level") or "notice"
+            raw_message = annotation.get("message") or annotation.get("title") or "GitHub annotation"
+            title = annotation.get("title")
+            if title and title not in raw_message:
+                error_message = f"{title}: {raw_message}"
+            else:
+                error_message = raw_message
+
+            line_number = annotation.get("start_line") or annotation.get("end_line")
+            error = ErrorBlock(
+                step_name=step_name,
+                error_type="check_annotation",
+                error_message=error_message.strip(),
+                file_path=annotation.get("path"),
+                line_number=int(line_number) if line_number else None,
+                severity=self._normalize_annotation_severity(level),
+            )
+
+            error_hash = error.get_hash()
+            if error_hash in seen_hashes:
+                continue
+            seen_hashes.add(error_hash)
+            errors.append(error)
+
+        return errors
+
+    @staticmethod
+    def _normalize_annotation_severity(level: str) -> str:
+        normalized = (level or "").lower()
+        if normalized == "failure":
+            return "critical"
+        if normalized == "warning":
+            return "medium"
+        return "low"
+
+    def format_job_overview(
+        self,
+        failed_jobs: List[Dict[str, Any]],
+    ) -> str:
+        if not failed_jobs:
+            return ""
+
+        lines = ["GitHub failed jobs:"]
+        for job in failed_jobs[:5]:
+            job_name = job.get("name", "Unknown job")
+            lines.append(f"- {job_name}")
+
+            failed_steps = self.extract_failed_steps(job)
+            if failed_steps:
+                step_names = ", ".join(step["name"] for step in failed_steps[:3])
+                lines.append(f"  Failed steps: {step_names}")
+
+            runner = job.get("runner_name")
+            if runner:
+                lines.append(f"  Runner: {runner}")
+
+            job_url = job.get("html_url")
+            if job_url:
+                lines.append(f"  URL: {job_url}")
+
+        if len(failed_jobs) > 5:
+            lines.append(f"- ... and {len(failed_jobs) - 5} more failed job(s)")
+
+        return "\n".join(lines)
     
     def clean_line(self, line: str) -> str:
         """Clean and validate log line to prevent ReDoS attacks."""
@@ -266,7 +374,13 @@ class GitHubLogExtractor:
         
         try:
             async with GitHubClient(token=self.github_token) as client:
-                jobs = await client.list_jobs_for_workflow_run(owner=owner, repo=repo, run_id=run_id)
+                jobs = await client.list_jobs_for_workflow_run(
+                    owner=owner,
+                    repo=repo,
+                    run_id=run_id,
+                    filter="latest",
+                    per_page=100,
+                )
                 
                 failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
                 
@@ -275,10 +389,35 @@ class GitHubLogExtractor:
                     return ""
                 
                 all_errors = []
+                job_overview = self.parser.format_job_overview(failed_jobs)
                 
                 for job in failed_jobs:
                     job_id = job.get("id")
                     job_name = job.get("name", "unknown")
+                    failed_steps = self.parser.extract_failed_steps(job)
+
+                    check_run_id = self.parser.extract_check_run_id(job)
+                    if check_run_id:
+                        try:
+                            annotations = await client.list_check_run_annotations(
+                                owner=owner,
+                                repo=repo,
+                                check_run_id=check_run_id,
+                            )
+                            annotation_errors = self.parser.extract_annotation_errors(
+                                annotations,
+                                job_name=job_name,
+                                failed_steps=failed_steps,
+                            )
+                            all_errors.extend(annotation_errors)
+                        except Exception as e:
+                            logger.warning(
+                                "github_check_annotations_fetch_failed",
+                                repo=f"{owner}/{repo}",
+                                run_id=run_id,
+                                check_run_id=check_run_id,
+                                error=str(e),
+                            )
                     
                     try:
                         logs = await client.download_job_logs(owner=owner, repo=repo, job_id=job_id)
@@ -304,6 +443,8 @@ class GitHubLogExtractor:
                 if all_errors:
                     groups = self.parser.group_errors(all_errors)
                     summary = self.parser.format_compact_summary(groups)
+                    if job_overview:
+                        summary = f"{job_overview}\n\n{summary}"
                     
                     logger.info(
                         "github_errors_extracted",
@@ -315,8 +456,8 @@ class GitHubLogExtractor:
                     )
                     
                     return summary
-                
-                return ""
+
+                return job_overview
             
         except Exception as e:
             logger.error("github_log_extraction_failed", repo=f"{owner}/{repo}", run_id=run_id, error=str(e))

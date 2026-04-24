@@ -272,6 +272,7 @@ class NVIDIALLMClient(NVIDIAClient):
             prompt: str,
             max_tokens: int = 1000,
             temperature: float = 0.1,
+            system_prompt: Optional[str] = None,
             **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -286,9 +287,14 @@ class NVIDIALLMClient(NVIDIAClient):
         Returns:
             API response with completion
         """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             **kwargs,
