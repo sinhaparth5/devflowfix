@@ -24,9 +24,9 @@ class Incident:
     """
     incident_id: str = field(default_factory=lambda: f"inc_{uuid4().hex[:12]}")
 
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: Optional[datetime] = None
 
     source: IncidentSource = IncidentSource.MANUAL

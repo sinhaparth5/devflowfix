@@ -354,7 +354,7 @@ class Settings(BaseSettings):
     )
     
     nvidia_api_base_url: str = Field(
-        default="https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions",
+        default="https://integrate.api.nvidia.com/v1",
         description="NVIDIA API base URL"
     )
     

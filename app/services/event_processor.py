@@ -138,7 +138,7 @@ class EventProcessor:
                     similar_incidents=similar_incidents,
                 )
             
-            # Generate and log solutions
+            # Generate solutions and attempt any repository-backed follow-up such as PR creation.
             await self._generate_and_log_solutions(incident, analysis)
             
             decision = await self._decide(analysis, incident, context, similar_incidents)
@@ -222,6 +222,7 @@ class EventProcessor:
             similar_incidents = await self._retrieve_similar(incident)
             analysis = await self._analyze(incident, similar_incidents)
             await self._update_incident_analysis(incident, analysis)
+            await self._generate_and_log_solutions(incident, analysis)
             
             decision = await self._decide(analysis, incident, context, similar_incidents)
             
@@ -231,7 +232,11 @@ class EventProcessor:
             elif decision.requires_approval:
                 await self._request_approval(incident, decision)
             else:
-                await self._escalate(incident, decision)
+                if decision.escalate:
+                    await self._escalate(incident, decision)
+                else:
+                    incident.mark_resolved(Outcome.PENDING, decision.reason)
+                    self._persist_incident_state(incident)
                 
         except Exception as e:
             logger.exception("background_processing_failed", incident_id=incident.incident_id)
@@ -378,7 +383,7 @@ class EventProcessor:
         self,
         incident: Incident,
         analysis: AnalysisResult,
-    ):
+    ) -> Optional[Dict[str, Any]]:
         """
         Generate and log solutions for the incident using the LLM.
         
@@ -392,7 +397,12 @@ class EventProcessor:
                     "solution_generation_skipped_no_llm",
                     incident_id=incident.incident_id,
                 )
-                return
+                await self._record_post_analysis_state(
+                    incident,
+                    status="skipped",
+                    reason="no_llm_available",
+                )
+                return None
             
             logger.info(
                 "solution_generation_start",
@@ -600,110 +610,8 @@ class EventProcessor:
                 has_config_changes=bool(solution.get("configuration_changes")),
             )
 
-            # Debug PR creation decision
-            should_create = self._should_create_pr(analysis, incident)
-            
-            print(f"\n{'='*80}")
-            print(f"🔍 PR CREATION DECISION")
-            print(f"{'='*80}")
-            print(f"   Auto PR Enabled: {self.enable_auto_pr}")
-            print(f"   Has Code Changes: {bool(solution.get('code_changes'))}")
-            print(f"   Should Create PR: {should_create}")
-            print(f"   Confidence: {analysis.confidence:.2%}")
-            print(f"   Fixability: {analysis.fixability}")
-            print(f"   Repository: {incident.context.get('repository')}")
-            print(f"{'='*80}\n")
-            
-            logger.info(
-                "pr_creation_decision",
-                incident_id=incident.incident_id,
-                enable_auto_pr=self.enable_auto_pr,
-                has_code_changes=bool(solution.get("code_changes")),
-                should_create_pr=should_create,
-                confidence=analysis.confidence,
-                fixability=str(analysis.fixability),
-                has_repository=bool(incident.context.get("repository")),
-            )
-
-            if (
-                self.enable_auto_pr
-                and solution.get("code_changes")
-                and should_create
-            ):
-                try:
-                    logger.info(
-                        "auto_pr_creation_start",
-                        incident_id=incident.incident_id,
-                        failure_type=analysis.category.value,
-                    )
-
-                    # Extract user_id from incident context
-                    user_id = incident.context.get("user_id")
-
-                    pr_result = await self._create_fix_pr(
-                        incident=incident,
-                        analysis=analysis,
-                        solution=solution,
-                        user_id=user_id,
-                    )
-
-                    logger.info(
-                        "auto_pr_create_success",
-                        incident_id=incident.incident_id,
-                        pr_number=pr_result.get("number"),
-                        pr_url=pr_result.get("html_url"),
-                    )
-
-                    print(f"\n{'🎉 '*20}")
-                    print(f"{'='*80}")
-                    print(f"  AUTOMATED FIX PULL REQUEST CREATED!")
-                    print(f"{'='*80}")
-                    print(f"  PR #{pr_result.get('number')}: {pr_result.get('title', 'Auto-fix')}")
-                    print(f"  🔗 URL: {pr_result.get('html_url')}")
-                    print(f"  🌿 Branch: {pr_result.get('head', {}).get('ref', 'N/A')}")
-                    print(f"  📝 Files Changed: {len(solution.get('code_changes', []))}")
-                    print(f"  ⚡ Status: Ready for Review")
-                    print(f"{'='*80}")
-                    print(f"{'🎉 '*20}\n")
-                    
-                    # Store PR info in incident metadata
-                    if not incident.context.get("automated_pr"):
-                        incident.context["automated_pr"] = {
-                            "number": pr_result.get("number"),
-                            "url": pr_result.get("html_url"),
-                            "branch": pr_result.get("head", {}).get("ref"),
-                            "created_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        
-                        # Update incident in database
-                        incident_table = self.incident_repo.get_by_id(incident.incident_id)
-                        if incident_table:
-                            incident_table.context = incident.context
-                            self.incident_repo.update(incident_table)
-                except Exception as pr_error:
-                    logger.error(
-                        "auto_pr_creation_failed",
-                        incident_id=incident.incident_id,
-                        error=str(pr_error),
-                        exc_info=True,
-                    )
-
-                    print(f"\n⚠️  WARNING: Failed to create automated PR")
-                    print(f"   Reason: {str(pr_error)}")
-                    print(f"   You can still use the solution details above to fix manually.\n")
-            elif solution.get("code_changes"):
-                if not self.enable_auto_pr:
-                    logger.info(
-                        "auto_pr_skipped_disabled",
-                        incident_id=incident.incident_id,
-                    )
-                elif not self._should_create_pr(analysis, incident):
-                    logger.info(
-                        "auto_pr_skipped_criteria_not_met",
-                        incident_id=incident.incident_id,
-                        confidence=analysis.confidence,
-                        failure_type=analysis.category.value,
-                    )
+            await self._attempt_post_analysis_pr(incident, analysis, solution)
+            return solution
             
         except Exception as e:
             logger.error(
@@ -712,11 +620,121 @@ class EventProcessor:
                 error=str(e),
                 exc_info=True,
             )
+            await self._record_post_analysis_state(
+                incident,
+                status="failed",
+                reason=str(e),
+            )
+            return None
+
+    async def _attempt_post_analysis_pr(
+        self,
+        incident: Incident,
+        analysis: AnalysisResult,
+        solution: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not solution.get("code_changes"):
+            await self._record_post_analysis_state(
+                incident,
+                status="skipped",
+                reason="no_code_changes",
+            )
+            return None
+
+        supported, reason = self._supports_automated_pr(incident)
+        if not supported:
+            await self._record_post_analysis_state(
+                incident,
+                status="skipped",
+                reason=reason,
+            )
+            logger.info("auto_pr_skipped", incident_id=incident.incident_id, reason=reason)
+            return None
+
+        if not self.enable_auto_pr:
+            await self._record_post_analysis_state(
+                incident,
+                status="skipped",
+                reason="auto_pr_disabled",
+            )
+            logger.info("auto_pr_skipped_disabled", incident_id=incident.incident_id)
+            return None
+
+        should_create = self._should_create_pr(analysis, incident, solution)
+        logger.info(
+            "pr_creation_decision",
+            incident_id=incident.incident_id,
+            enable_auto_pr=self.enable_auto_pr,
+            has_code_changes=bool(solution.get("code_changes")),
+            should_create_pr=should_create,
+            confidence=analysis.confidence,
+            fixability=str(analysis.fixability),
+            has_repository=bool(incident.context.get("repository")),
+            provider=incident.source.value,
+        )
+
+        if not should_create:
+            await self._record_post_analysis_state(
+                incident,
+                status="skipped",
+                reason="pr_creation_criteria_not_met",
+            )
+            return None
+
+        try:
+            logger.info(
+                "auto_pr_creation_start",
+                incident_id=incident.incident_id,
+                failure_type=analysis.category.value,
+            )
+
+            user_id = incident.context.get("user_id")
+            pr_result = await self._create_fix_pr(
+                incident=incident,
+                analysis=analysis,
+                solution=solution,
+                user_id=user_id,
+            )
+
+            logger.info(
+                "auto_pr_create_success",
+                incident_id=incident.incident_id,
+                pr_number=pr_result.get("number"),
+                pr_url=pr_result.get("html_url"),
+            )
+
+            incident.context["automated_pr"] = {
+                "number": pr_result.get("number"),
+                "url": pr_result.get("html_url"),
+                "branch": pr_result.get("head", {}).get("ref"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await self._record_post_analysis_state(
+                incident,
+                status="pr_created",
+                reason="created",
+                extra={"pr_number": pr_result.get("number")},
+            )
+            return pr_result
+        except Exception as pr_error:
+            logger.error(
+                "auto_pr_creation_failed",
+                incident_id=incident.incident_id,
+                error=str(pr_error),
+                exc_info=True,
+            )
+            await self._record_post_analysis_state(
+                incident,
+                status="failed",
+                reason=f"pr_creation_failed:{pr_error}",
+            )
+            return None
         
     def _should_create_pr(
             self,
             analysis: AnalysisResult,
             incident: Incident,
+            solution: Optional[Dict[str, Any]] = None,
             min_confidence: float = 0.70,
     ) -> bool:
         """
@@ -740,6 +758,7 @@ class EventProcessor:
             fixability=str(analysis.fixability) if analysis.fixability else "unknown",
             has_repository=bool(incident.context.get("repository")),
             repository=incident.context.get("repository"),
+            has_code_changes=bool(solution and solution.get("code_changes")),
         )
         
         if analysis.confidence < min_confidence:
@@ -751,25 +770,7 @@ class EventProcessor:
             )
 
             return False
-        
-        from app.core.enums import FailureType
 
-        auto_fix_types = [
-            FailureType.LINT_FAILURE,
-            FailureType.TEST_FAILURE,
-            FailureType.DEPENDENCY_ERROR,
-            FailureType.CONFIG_ERROR,
-            FailureType.BUILD_FAILURE,
-        ]
-
-        if analysis.category not in auto_fix_types:
-            logger.info(
-                "pr_creation_skipped_failure_type",
-                incident_id=incident.incident_id,
-                failure_type=analysis.category.value,
-            )
-            return False
-        
         if not incident.context.get("repository"):
             logger.info(
                 "pr_creation_skipped_no_repo",
@@ -784,16 +785,11 @@ class EventProcessor:
                 existing_pr=incident.context["automated_pr"].get("number"),
             )
             return False
-        
-        from app.core.enums import Fixability
 
-        # Allow both AUTO and MANUAL fixability to create PRs
-        # AUTO = automatic fixes, MANUAL = suggestions/comments
-        if analysis.fixability not in [Fixability.AUTO, Fixability.MANUAL]:
+        if solution is not None and not solution.get("code_changes"):
             logger.info(
-                "pr_creation_skipped_not_fixable",
+                "pr_creation_skipped_no_code_changes",
                 incident_id=incident.incident_id,
-                fixability=analysis.fixability.value if hasattr(analysis.fixability, 'value') else str(analysis.fixability)
             )
             return False
         
@@ -806,6 +802,37 @@ class EventProcessor:
         )
 
         return True
+
+    def _supports_automated_pr(self, incident: Incident) -> tuple[bool, str]:
+        repository = incident.context.get("repository")
+        if not repository:
+            return False, "missing_repository_context"
+
+        if incident.source != IncidentSource.GITHUB:
+            return False, f"provider_{incident.source.value}_pr_not_supported"
+
+        if not incident.context.get("user_id"):
+            return False, "missing_user_id"
+
+        return True, "supported"
+
+    async def _record_post_analysis_state(
+        self,
+        incident: Incident,
+        status: str,
+        reason: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        state = {
+            "status": status,
+            "reason": reason,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if extra:
+            state.update(extra)
+
+        incident.context["post_analysis"] = state
+        self._persist_incident_context(incident)
     
     async def _create_fix_pr(
             self,
@@ -827,6 +854,34 @@ class EventProcessor:
         )
 
         return pr_result
+
+    def _persist_incident_context(self, incident: Incident) -> None:
+        incident_table = self.incident_repo.get_by_id(incident.incident_id)
+        if not incident_table:
+            return
+
+        incident_table.context = incident.context
+        self.incident_repo.update(incident_table)
+
+    def _persist_incident_state(self, incident: Incident) -> None:
+        incident_table = self.incident_repo.get_by_id(incident.incident_id)
+        if not incident_table:
+            return
+
+        incident_table.context = incident.context
+        incident_table.root_cause = incident.root_cause
+        incident_table.failure_type = incident.failure_type.value if incident.failure_type else incident_table.failure_type
+        incident_table.fixability = incident.fixability.value if incident.fixability else incident_table.fixability
+        incident_table.confidence = incident.confidence
+        incident_table.remediation_plan = incident.remediation_plan
+        incident_table.remediation_executed = incident.remediation_executed
+        incident_table.remediation_start_time = incident.remediation_start_time
+        incident_table.remediation_end_time = incident.remediation_end_time
+        incident_table.outcome = incident.outcome.value if incident.outcome else None
+        incident_table.outcome_message = incident.outcome_message
+        incident_table.resolved_at = incident.resolved_at
+        incident_table.resolution_time_seconds = incident.resolution_time_seconds
+        self.incident_repo.update(incident_table)
     
     async def _update_incident_analysis(
         self,
@@ -886,7 +941,7 @@ class EventProcessor:
             )
         
         incident.start_remediation()
-        await self.incident_repo.update(incident)
+        self._persist_incident_state(incident)
         
         result = await self.remediator.execute(
             incident=incident,
@@ -920,7 +975,7 @@ class EventProcessor:
             "rollback_snapshot_id": result.rollback_snapshot_id,
         }
         
-        await self.incident_repo.update(incident)
+        self._persist_incident_state(incident)
         
         logger.info(
             "incident_finalized",
@@ -941,8 +996,7 @@ class EventProcessor:
             outcome = Outcome.ESCALATED
         else:
             incident.mark_resolved(Outcome.PENDING, decision.reason)
-            # Update via incident_id instead of passing domain model
-            # The incident is already in the database, just update status
+            self._persist_incident_state(incident)
             outcome = Outcome.PENDING
         
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
@@ -985,6 +1039,11 @@ class EventProcessor:
         incident: Incident,
         decision: DecisionResult,
     ):
+        incident.outcome = Outcome.PENDING
+        incident.outcome_message = "Awaiting human approval"
+        incident.updated_at = datetime.now(timezone.utc)
+        self._persist_incident_state(incident)
+
         if self.enable_notifications and self.notification_service:
             await self._notify(
                 NotificationType.APPROVAL_REQUESTED,
@@ -1004,7 +1063,7 @@ class EventProcessor:
         decision: DecisionResult,
     ):
         incident.mark_resolved(Outcome.ESCALATED, decision.reason)
-        await self.incident_repo.update(incident)
+        self._persist_incident_state(incident)
         
         if self.enable_notifications and self.notification_service:
             await self._notify(

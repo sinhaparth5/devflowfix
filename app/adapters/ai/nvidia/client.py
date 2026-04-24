@@ -16,6 +16,9 @@ from app.exceptions import NVIDIAAPIError
 
 logger = structlog.get_logger(__name__)
 
+OPENAI_COMPATIBLE_BASE_URL = "https://integrate.api.nvidia.com/v1"
+LEGACY_PEXEC_BASE_URL = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions"
+
 class NVIDIAClient:
     """
     HTTP client for NVIDIA NGC API.
@@ -25,8 +28,8 @@ class NVIDIAClient:
             self,
             api_key: Optional[str] = None,
             base_url: Optional[str] = None,
-            timeout: Optional[str] = None,
-            max_retries: Optional[str] = None,
+            timeout: Optional[int] = None,
+            max_retries: Optional[int] = None,
     ):
         """
         Initialize NVIDIA API client.
@@ -38,7 +41,7 @@ class NVIDIAClient:
             max_retries: Maximum retry attempts (defaults to settings)
         """
         self.api_key = api_key or settings.nvidia_api_key
-        self.base_url = base_url or settings.nvidia_api_base_url
+        self.base_url = self._normalize_base_url(base_url or settings.nvidia_api_base_url)
         self.timeout = timeout or settings.nvidia_api_timeout
         self.max_retries = max_retries or settings.nvidia_max_retries
 
@@ -57,6 +60,25 @@ class NVIDIAClient:
             timeout=self.timeout,
             max_retries=self.max_retries,
         )
+
+    def _normalize_base_url(self, base_url: Optional[str]) -> str:
+        """
+        Normalize NVIDIA API base URLs to the OpenAI-compatible endpoint used by this app.
+        """
+        normalized = (base_url or OPENAI_COMPATIBLE_BASE_URL).rstrip("/")
+
+        if normalized == LEGACY_PEXEC_BASE_URL:
+            logger.warning(
+                "nvidia_legacy_base_url_detected",
+                configured_base_url=normalized,
+                normalized_base_url=OPENAI_COMPATIBLE_BASE_URL,
+            )
+            return OPENAI_COMPATIBLE_BASE_URL
+
+        if normalized == "https://integrate.api.nvidia.com":
+            return OPENAI_COMPATIBLE_BASE_URL
+
+        return normalized
 
     def _get_headers(self) -> Dict[str, str]:
         """
@@ -99,10 +121,7 @@ class NVIDIAClient:
         Raises:
             NVIDIAAPIError: If API request fails
         """
-        if function_id:
-            url = f"{self.base_url}/{function_id}{endpoint}"
-        else:
-            url = endpoint if endpoint.startswith("http") else f"{self.base_url}{endpoint}"
+        url = self._build_url(endpoint=endpoint, function_id=function_id)
 
         logger.debug(
             "nvidia_api_request",
@@ -157,7 +176,7 @@ class NVIDIAClient:
         Returns:
             NVIDIAAPIError: If API request fails
         """
-        url = endpoint if endpoint.startswith("http") else f"{self.base_url}{endpoint}"
+        url = self._build_url(endpoint=endpoint)
 
         try:
             response = await self.client.get(url)
@@ -172,6 +191,20 @@ class NVIDIAClient:
         except httpx.HTTPError as e:
             logger.error("nvidia_api_error", url=url, error=str(e))
             raise NVIDIAAPIError(f"HTTP error: {e}")
+
+    def _build_url(self, endpoint: str, function_id: Optional[str] = None) -> str:
+        """
+        Build an absolute NVIDIA API URL for either the OpenAI-compatible API or legacy function execution.
+        """
+        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+            return endpoint
+
+        clean_endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+
+        if function_id:
+            return f"{LEGACY_PEXEC_BASE_URL}/{function_id}{clean_endpoint}"
+
+        return f"{self.base_url}{clean_endpoint}"
         
     def _extract_error_detail(self, response: httpx.Response) -> str:
         """

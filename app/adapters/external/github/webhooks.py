@@ -97,15 +97,16 @@ class GitHubWebhookClient:
         
         if not is_valid:
             logger.warning(
-                "Webhook signature verification failed",
-                received_signature=github_signature[:16] + "...",
-                expected_signature=expected_signature[:16] + "...",
-                payload_size=len(payload_body),
+                "Webhook signature verification failed "
+                "(received=%s expected=%s payload_size=%s)",
+                github_signature[:16] + "...",
+                expected_signature[:16] + "...",
+                len(payload_body),
             )
         else:
             logger.info(
-                "Webhook signature verified successfully",
-                signature_prefix=expected_signature[:16] + "...",
+                "Webhook signature verified successfully (signature=%s)",
+                expected_signature[:16] + "...",
             )
         
         return is_valid
