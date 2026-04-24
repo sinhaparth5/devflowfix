@@ -297,6 +297,11 @@ class Settings(BaseSettings):
     )
     
     debug: bool = Field(default=False, description="Enable debug mode", alias="DEBUG")
+    enable_api_docs: bool = Field(
+        default=True,
+        alias="ENABLE_API_DOCS",
+        description="Expose Swagger UI, ReDoc, and OpenAPI schema routes",
+    )
     
     # API settings
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")

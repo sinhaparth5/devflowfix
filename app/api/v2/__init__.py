@@ -17,7 +17,7 @@ from .analytics import router as analytics_router
 from .webhooks import router as webhooks_router
 
 # Create v2 API router
-router = APIRouter(prefix="/v2", tags=["API v2"])
+router = APIRouter(prefix="/v2")
 
 # Include sub-routers
 router.include_router(oauth_router)

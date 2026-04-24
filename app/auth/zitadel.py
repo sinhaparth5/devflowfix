@@ -8,7 +8,9 @@ JWT validation and user extraction for Zitadel OIDC tokens.
 Optimized with TTLCache, persistent HTTP client, and lazy DB sync.
 """
 
+import asyncio
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 from typing import Optional, Annotated
 from dataclasses import dataclass, field
 import httpx
@@ -29,6 +31,7 @@ _http_client: Optional[httpx.AsyncClient] = None
 
 # Last login update throttle interval (avoid updating on every request)
 LAST_LOGIN_UPDATE_INTERVAL = timedelta(minutes=5)
+ANALYTICS_ACTIVE_USER_CACHE_TTL_SECONDS = 120
 
 # Security scheme for OpenAPI docs
 security = HTTPBearer(auto_error=False)
@@ -155,6 +158,63 @@ class ZitadelAuth:
         self.settings = settings
         # TTLCache: max 10,000 entries, 600 second TTL
         self._userinfo_cache: TTLCache = TTLCache(maxsize=10000, ttl=600)
+        self._active_user_cache: TTLCache = TTLCache(
+            maxsize=10000,
+            ttl=ANALYTICS_ACTIVE_USER_CACHE_TTL_SECONDS,
+        )
+        self._userinfo_inflight: dict[str, asyncio.Task] = {}
+        self._userinfo_lock = asyncio.Lock()
+
+    async def _fetch_userinfo(self, token: str) -> dict:
+        """Fetch userinfo from Zitadel and populate the local TTL cache."""
+        client = await get_http_client()
+        response = await client.get(
+            self.settings.userinfo_uri,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+
+        if response.status_code == 401:
+            logger.warning(
+                "userinfo_unauthorized",
+                token_preview=token[:20] + "...",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if response.status_code != 200:
+            logger.warning(
+                "userinfo_request_failed",
+                status_code=response.status_code,
+                response=response.text[:200],
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token validation failed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        result = response.json()
+        if not result.get("sub"):
+            logger.warning("userinfo_missing_sub", result=result)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing user identifier",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        logger.debug(
+            "userinfo_fetched",
+            sub=result.get("sub"),
+            email=result.get("email"),
+        )
+        self._userinfo_cache[token] = result
+        return result
 
     async def get_userinfo(self, token: str) -> dict:
         """
@@ -187,61 +247,29 @@ class ZitadelAuth:
             logger.debug("userinfo_cache_hit", sub=cached.get("sub"))
             return cached
 
-        # Use persistent HTTP client with connection pooling
         try:
-            client = await get_http_client()
-            response = await client.get(
-                self.settings.userinfo_uri,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                },
-            )
+            async with self._userinfo_lock:
+                cached = self._userinfo_cache.get(token)
+                if cached:
+                    logger.debug("userinfo_cache_hit_after_lock", sub=cached.get("sub"))
+                    return cached
 
-            if response.status_code == 401:
-                logger.warning(
-                    "userinfo_unauthorized",
-                    token_preview=token[:20] + "...",
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid or expired token",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+                inflight = self._userinfo_inflight.get(token)
+                created_task = False
+                if inflight is None:
+                    inflight = asyncio.create_task(self._fetch_userinfo(token))
+                    self._userinfo_inflight[token] = inflight
+                    created_task = True
+                else:
+                    logger.debug("userinfo_inflight_wait", token_preview=token[:12] + "...")
 
-            if response.status_code != 200:
-                logger.warning(
-                    "userinfo_request_failed",
-                    status_code=response.status_code,
-                    response=response.text[:200],
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token validation failed",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-            result = response.json()
-
-            # Userinfo must have a sub claim
-            if not result.get("sub"):
-                logger.warning("userinfo_missing_sub", result=result)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token: missing user identifier",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-            logger.debug(
-                "userinfo_fetched",
-                sub=result.get("sub"),
-                email=result.get("email"),
-            )
-
-            # Cache in TTLCache (auto-expires after 600s)
-            self._userinfo_cache[token] = result
-
-            return result
+            try:
+                return await inflight
+            finally:
+                if created_task:
+                    async with self._userinfo_lock:
+                        if self._userinfo_inflight.get(token) is inflight:
+                            self._userinfo_inflight.pop(token, None)
 
         except HTTPException:
             raise
@@ -300,6 +328,33 @@ def get_auth() -> ZitadelAuth:
         settings = get_zitadel_settings()
         _auth_instance = ZitadelAuth(settings)
     return _auth_instance
+
+
+def _build_db_user_snapshot(db_user: UserTable) -> dict:
+    """Build a serializable snapshot for short-lived active-user caching."""
+    return {
+        "user_id": db_user.user_id,
+        "email": db_user.email,
+        "full_name": db_user.full_name,
+        "avatar_url": db_user.avatar_url,
+        "is_active": db_user.is_active,
+        "is_verified": db_user.is_verified,
+        "role": db_user.role,
+        "oauth_provider": db_user.oauth_provider,
+        "oauth_id": db_user.oauth_id,
+        "created_at": db_user.created_at,
+        "updated_at": db_user.updated_at,
+        "last_login_at": db_user.last_login_at,
+    }
+
+
+def _cache_active_user_snapshot(user_id: str, db_user: UserTable) -> None:
+    auth = get_auth()
+    auth._active_user_cache[user_id] = _build_db_user_snapshot(db_user)
+
+
+def _get_cached_active_user_snapshot(user_id: str) -> Optional[dict]:
+    return get_auth()._active_user_cache.get(user_id)
 
 
 async def get_current_user(
@@ -466,10 +521,44 @@ async def get_current_active_user(
 
     # Attach database user to ZitadelUser
     user.db_user = db_user
+    _cache_active_user_snapshot(user.sub, db_user)
 
     return {
         "user": user,
         "db_user": db_user,
+    }
+
+
+async def get_current_active_analytics_user(
+    user: ZitadelUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Fast path for analytics routes.
+
+    Uses normal token validation, but caches the active-user DB snapshot briefly so
+    multiple dashboard requests do not repeat DB sync and backfill work.
+    """
+    cached = _get_cached_active_user_snapshot(user.sub)
+    if cached:
+        if not cached.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is deactivated",
+            )
+        user.db_user = SimpleNamespace(**cached)
+        return {
+            "user": user,
+            "db_user": user.db_user,
+        }
+
+    current_user_data = await get_current_active_user(user=user, db=db)
+    db_user = current_user_data["db_user"]
+    snapshot = _build_db_user_snapshot(db_user)
+    user.db_user = SimpleNamespace(**snapshot)
+    return {
+        "user": current_user_data["user"],
+        "db_user": user.db_user,
     }
 
 

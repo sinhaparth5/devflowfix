@@ -16,6 +16,7 @@ Structure:
 from app.auth.zitadel import (
     get_current_user,
     get_current_active_user,
+    get_current_active_analytics_user,
     get_optional_user,
     require_admin,
     ZitadelUser,
@@ -27,6 +28,7 @@ __all__ = [
     # Auth dependencies (use in route handlers)
     "get_current_user",
     "get_current_active_user",
+    "get_current_active_analytics_user",
     "get_optional_user",
     "require_admin",
     # Classes

@@ -12,10 +12,10 @@ from .user_details import router as user_details_router
 from .webhook import router as webhook_router
 
 
-router = APIRouter(prefix="/v1", tags=["API v1"])
+router = APIRouter(prefix="/v1")
 
 router.include_router(incidents_router)
-router.include_router(webhook_router, tags=["Webhooks"])
+router.include_router(webhook_router)
 router.include_router(analytics_router)
 router.include_router(pr_management_router)
 router.include_router(user_details_router)

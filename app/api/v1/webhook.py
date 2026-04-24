@@ -73,6 +73,7 @@ async def verify_github_webhook_signature(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="GitHub webhook endpoint",
+    tags=["Webhooks"],
 )
 async def receive_github_webhook(
     user_id: str,
@@ -102,6 +103,7 @@ async def receive_github_webhook(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="GitHub webhook endpoint (synchronous)",
+    tags=["Webhooks"],
 )
 async def receive_github_webhook_sync(
     user_id: str,
@@ -126,6 +128,7 @@ async def receive_github_webhook_sync(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="ArgoCD webhook endpoint",
+    tags=["Webhooks"],
 )
 async def receive_argocd_webhook(
     user_id: str,
@@ -150,6 +153,7 @@ async def receive_argocd_webhook(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="Kubernetes event webhook endpoint",
+    tags=["Webhooks"],
 )
 async def receive_kubernetes_webhook(
     user_id: str,
@@ -174,6 +178,7 @@ async def receive_kubernetes_webhook(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="GitLab webhook endpoint",
+    tags=["Webhooks"],
 )
 async def receive_gitlab_webhook(
     user_id: str,
@@ -201,6 +206,7 @@ async def receive_gitlab_webhook(
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
     summary="Generic webhook endpoint",
+    tags=["Webhooks"],
 )
 async def receive_generic_webhook(
     user_id: str,
@@ -308,6 +314,7 @@ async def test_webhook_signature(
     "/webhook/health",
     status_code=status.HTTP_200_OK,
     summary="Webhook health check",
+    tags=["Webhooks"],
 )
 async def webhook_health() -> Dict[str, Any]:
     return webhook_health_payload()

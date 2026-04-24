@@ -20,7 +20,7 @@ from . import github
 from . import gitlab
 
 # Create main OAuth router
-router = APIRouter(prefix="/oauth", tags=["OAuth"])
+router = APIRouter(prefix="/oauth")
 
 # Include provider-specific routers
 router.include_router(github.router)
@@ -35,6 +35,7 @@ settings = get_settings()
     status_code=status.HTTP_200_OK,
     summary="List OAuth Connections",
     description="Get all OAuth connections for the current user.",
+    tags=["OAuth"],
 )
 async def list_oauth_connections(
     db: Session = Depends(get_db),

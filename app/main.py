@@ -81,9 +81,9 @@ app = FastAPI(
     title="DevFlowFix",
     description="Autonomous AI agent for CI/CD failure detection, analysis, and remediation",
     version=settings.version,
-    docs_url="/docs" if not settings.is_production else None,
-    redoc_url="/redoc" if not settings.is_production else None,
-    openapi_url="/openapi.json" if not settings.is_production else None,
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
     lifespan=lifespan,
     swagger_ui_parameters={
         "persistAuthorization": True,

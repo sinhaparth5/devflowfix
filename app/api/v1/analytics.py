@@ -13,7 +13,7 @@ from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
 from app.core.enums import IncidentSource, Severity, Outcome
-from app.auth import get_current_active_user
+from app.auth import get_current_active_analytics_user
 from app.core.schemas.jobs import JobType
 from app.services.export import CSVExportService, PDFExportService
 
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
     description="Get comprehensive dashboard data including today, week, and month stats for current user",
 )
 async def get_dashboard(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get dashboard summary for the current authenticated user only."""
@@ -51,7 +51,7 @@ async def get_dashboard(
     description="Get incident counts and success rates for current user with optional date filtering",
 )
 async def get_stats(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None, description="Filter from date"),
     end_date: Optional[datetime] = Query(None, description="Filter to date"),
     source: Optional[str] = Query(None, description="Filter by source"),
@@ -92,7 +92,7 @@ async def get_stats(
     description="Get incident count breakdown by source platform for current user",
 )
 async def get_breakdown_by_source(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -121,7 +121,7 @@ async def get_breakdown_by_source(
     description="Get incident count breakdown by severity level for current user",
 )
 async def get_breakdown_by_severity(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -150,7 +150,7 @@ async def get_breakdown_by_severity(
     description="Get incident count breakdown by failure type for current user",
 )
 async def get_breakdown_by_failure_type(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -179,7 +179,7 @@ async def get_breakdown_by_failure_type(
     description="Get incident count breakdown by outcome status for current user",
 )
 async def get_breakdown_by_outcome(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -208,7 +208,7 @@ async def get_breakdown_by_outcome(
     description="Get incident trends over time for current user with configurable granularity",
 )
 async def get_trends(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
     granularity: str = Query("day", pattern="^(hour|day|week)$", description="Time granularity"),
     db: Session = Depends(get_db),
@@ -237,7 +237,7 @@ async def get_trends(
     description="Get MTTR statistics for current user including average, min, max, median, and p95",
 )
 async def get_mttr(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     source: Optional[str] = Query(None),
@@ -278,7 +278,7 @@ async def get_mttr(
     description="Get auto-fix vs escalation rate statistics for current user",
 )
 async def get_auto_fix_rate(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -307,7 +307,7 @@ async def get_auto_fix_rate(
     description="Get distribution of AI confidence scores for current user's incidents",
 )
 async def get_confidence_distribution(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -336,7 +336,7 @@ async def get_confidence_distribution(
     description="Get success rates for each remediation action type for current user",
 )
 async def get_remediation_success(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -364,7 +364,7 @@ async def get_remediation_success(
     description="Get summary of user feedback on remediations for current user",
 )
 async def get_feedback_summary(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
@@ -392,7 +392,7 @@ async def get_feedback_summary(
     description="Get most common failure types for current user",
 )
 async def get_top_failure_types(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
@@ -423,7 +423,7 @@ async def get_top_failure_types(
     description="Get repositories with most incidents for current user",
 )
 async def get_top_repositories(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     limit: int = Query(10, ge=1, le=50),
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
@@ -454,7 +454,7 @@ async def get_top_repositories(
     description="Get incident count by hour of day for current user",
 )
 async def get_hourly_distribution(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ) -> Dict[int, int]:
@@ -478,7 +478,7 @@ async def get_hourly_distribution(
     description="Get incident count by day of week for current user",
 )
 async def get_daily_distribution(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ) -> Dict[str, int]:
@@ -502,7 +502,7 @@ async def get_daily_distribution(
     description="Get a comprehensive overview for current user's frontend dashboard",
 )
 async def get_analytics_overview(
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -561,7 +561,7 @@ async def get_analytics_overview(
 async def export_analytics(
     format: str = Query(..., description="Export format (csv or pdf)", pattern="^(csv|pdf)$"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
-    current_user: dict = Depends(get_current_active_user),
+    current_user: dict = Depends(get_current_active_analytics_user),
     db: Session = Depends(get_db),
 ):
     """

@@ -22,7 +22,7 @@ from app.core.schemas.analytics import (
     DashboardSummaryResponse,
 )
 from app.dependencies import get_db
-from app.auth import get_current_active_user
+from app.auth import get_current_active_analytics_user
 from app.services.analytics.analytics_service import AnalyticsService
 
 logger = structlog.get_logger(__name__)
@@ -51,7 +51,7 @@ async def get_workflow_trends(
     period: str = Query("day", description="Aggregation period (hour, day, week, month)"),
     repository_connection_id: Optional[str] = Query(None, description="Filter by repository"),
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
+    current_user_data: dict = Depends(get_current_active_analytics_user),
 ) -> WorkflowTrendResponse:
     """
     Get workflow trends over time.
@@ -106,7 +106,7 @@ async def get_workflow_trends(
 async def get_repository_health(
     repository_connection_id: Optional[str] = Query(None, description="Filter by repository"),
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
+    current_user_data: dict = Depends(get_current_active_analytics_user),
 ) -> RepositoryHealthListResponse:
     """
     Get repository health metrics.
@@ -168,7 +168,7 @@ async def get_incident_trends(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     period: str = Query("day", description="Aggregation period"),
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
+    current_user_data: dict = Depends(get_current_active_analytics_user),
 ) -> IncidentTrendResponse:
     """
     Get incident trends over time.
@@ -221,7 +221,7 @@ async def get_incident_trends(
 )
 async def get_system_health(
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
+    current_user_data: dict = Depends(get_current_active_analytics_user),
 ) -> SystemHealthResponse:
     """
     Get overall system health.
@@ -267,7 +267,7 @@ async def get_system_health(
 )
 async def get_dashboard_summary(
     db: Session = Depends(get_db),
-    current_user_data: dict = Depends(get_current_active_user),
+    current_user_data: dict = Depends(get_current_active_analytics_user),
 ) -> DashboardSummaryResponse:
     """
     Get dashboard summary with all key metrics.
