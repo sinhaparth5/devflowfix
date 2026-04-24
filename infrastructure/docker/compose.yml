@@ -1,3 +1,5 @@
+name: devflowfix
+
 services:
   migrate:
     build:
@@ -42,6 +44,25 @@ services:
     volumes:
       - ../..:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: devflowfix-ngrok
+    restart: on-failure
+    depends_on:
+      python:
+        condition: service_started
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'if [ -z "$$NGROK_AUTHTOKEN" ]; then echo "NGROK_AUTHTOKEN is not set — skipping ngrok"; exit 0; fi; if [ -n "$$NGROK_DOMAIN" ]; then exec ngrok http python:8000 --config /etc/ngrok.yml --domain="$$NGROK_DOMAIN" --log=stdout --log-format=json; else exec ngrok http python:8000 --config /etc/ngrok.yml --log=stdout --log-format=json; fi'
 
   postgres:
     image: pgvector/pgvector:pg17

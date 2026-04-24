@@ -57,14 +57,15 @@ docker-build:
 
 docker-up:
 	@echo "Starting Docker Compose stack..."
-	docker-compose up -d
+	docker compose -f infrastructure/docker/compose.yml up --build --remove-orphans
 	@echo "Services running at:"
-	@echo "  - PostgreSQL: localhost:5432"
-	@echo "  - App: localhost:8000"
+	@echo "  - PostgreSQL: localhost:5433"
+	@echo "  - App: localhost:8001"
+	@echo "  - ngrok dashboard: localhost:4040"
 
 docker-down:
 	@echo "Stopping Docker Compose stack..."
-	docker-compose down
+	docker compose -f infrastructure/docker/compose.yml down
 
 migrate:
 	@echo "Running database migrations..."
