@@ -1,0 +1,83 @@
+services:
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.dev
+    container_name: devflowfix-migrate
+    restart: "no"
+    working_dir: /app
+    environment:
+      ENVIRONMENT: dev
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/vector_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../..:/app
+    command: alembic upgrade head
+
+  python:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.dev
+    container_name: devflowfix-python
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "8001:8000"
+    environment:
+      ENVIRONMENT: dev
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/vector_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../..:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: devflowfix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vector_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - devflowfix_pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vector_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: devflowfix-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - devflowfix_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  devflowfix_pgdata:
+  devflowfix_redisdata:
