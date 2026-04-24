@@ -162,10 +162,17 @@ async def receive_github_webhook_impl(
     process_webhook_sync: Callable[..., None],
 ) -> WebhookResponse:
     incident_id = f"gh_{x_github_delivery or int(datetime.now(timezone.utc).timestamp() * 1000)}"
-    app_logger = AppLogger(db, incident_id=incident_id, user_id=user_id)
+    # The incident record does not exist yet at receipt time. Keep the logger
+    # detached from the future incident id until background processing persists it.
+    app_logger = AppLogger(db, incident_id=None, user_id=user_id)
     app_logger.webhook_received(
         f"GitHub {x_github_event} webhook received",
-        details={"event_type": x_github_event, "delivery_id": x_github_delivery, "body_size": len(body) if body else 0},
+        details={
+            "event_type": x_github_event,
+            "delivery_id": x_github_delivery,
+            "body_size": len(body) if body else 0,
+            "potential_incident_id": incident_id,
+        },
     )
 
     logger.info(
@@ -242,10 +249,14 @@ async def receive_github_webhook_impl(
     normalized_payload.setdefault("context", {})["user_id"] = user_id
 
     app_logger.info(
-        "Webhook queued for background processing",
+        f"Webhook queued for background processing (incident will be: {incident_id})",
         category=LogCategory.WEBHOOK,
         stage="webhook_queued",
-        details={"source": "github", "event_type": x_github_event},
+        details={
+            "source": "github",
+            "event_type": x_github_event,
+            "future_incident_id": incident_id,
+        },
     )
     background_tasks.add_task(
         process_webhook_sync,

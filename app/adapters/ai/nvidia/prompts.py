@@ -398,11 +398,11 @@ Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the foll
   }},
   "code_changes": [
     {{
-      "file_path": "path/to/file.js",
-      "line_number": 42,
+      "file_path": "EXTRACT from error log (e.g. src/hooks/useProducts.ts)",
+      "line_number": "EXTRACT from error log as INTEGER (e.g. 15, 23, 156)",
       "description": "What to change",
-      "current_code": "problematic code snippet",
-      "fixed_code": "corrected code snippet",
+      "current_code": "problematic code snippet from error",
+      "fixed_code": "corrected code snippet (use EMPTY STRING to delete line)",
       "explanation": "Why this fixes the issue"
     }}
   ],
@@ -424,16 +424,21 @@ Generate ONLY valid JSON (no markdown, no explanations, just JSON) with the foll
   ]
 }}
 
-IMPORTANT: 
+IMPORTANT:
 - Return ONLY valid JSON with NO markdown code blocks
 - Do NOT include explanations outside the JSON
 - All fields should be strings except arrays
 - If a section doesn't apply, use empty array [] or null
 - Ensure all JSON is valid and properly escaped
-- EXTRACT file_path from the error log (look for patterns like "src/file.js:42" or "at /path/to/file.py line 10")
-- EXTRACT line_number from the error message (look for "line 42", ":42:", "at line 42", etc.)
-- For code_changes, you MUST include the exact file_path and line_number from the error log
-- FOCUS ONLY on files that were recently modified/pushed (check context for changed_files list)
+
+FOR CODE_CHANGES:
+- EXTRACT file_path from the error log (look for patterns like "src/file.ts:42", "at /path/to/file.py line 10", "Error in src/hooks/useProducts.ts")
+- EXTRACT line_number from the error message (look for ":42:", "line 42", "at line 42") - MUST be an INTEGER or STRING of integer
+- DO NOT use example values (like 42) - use the ACTUAL line number from the error
+- For line_number, provide either an integer OR string of integer (e.g. 42 or "42")
+- For fixes that DELETE code (like removing unused variables), use EMPTY STRING for fixed_code: ""
+- For current_code, include the actual problematic code from the error message
+- FOCUS ONLY on files in the changed_files list from context
 - The fix should work for ANY programming language (Python, JavaScript, Java, Go, Ruby, etc.)
 
 Now generate the solution:"""
