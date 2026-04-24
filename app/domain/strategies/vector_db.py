@@ -48,7 +48,7 @@ class VectorDBStrategy(BaseStrategy):
         if success_rate > 0.8:
             confidence_boost = min(confidence_boost * 1.03, 1.0)
 
-        recency_boost = self._caluclate_recency_boost(analysis.similar_incidents)
+        recency_boost = self._calculate_recency_boost(analysis.similar_incidents)
         confidence_boost = min(confidence_boost + recency_boost, 1.0)
 
         final_confidence = (analysis.confidence * 0.4) + (confidence_boost * 0.6)

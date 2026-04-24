@@ -19,6 +19,7 @@ class StrategyFactory:
         StrategyType.SLACK_FIRST: SlackFirstStrategy,
         StrategyType.HYBRID: HybridStrategy,
         StrategyType.VECTOR_DB: VectorDBStrategy,
+        StrategyType.AGGRESSIVE: SlackFirstStrategy,
     }
 
     @classmethod

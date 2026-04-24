@@ -56,10 +56,13 @@ class AnalysisResult:
     
     def get_top_similar_incident(self) -> Optional[dict]:
         """ Get the most similar incident """
-        top = self.get_top_similar_incident()
-        if not top:
+        if not self.similar_incidents:
             return None
-        return top.get("similarity")
+
+        return max(
+            self.similar_incidents,
+            key=lambda incident: incident.get("similarity", 0),
+        )
     
     def add_warning(self, warning: str) -> None:
         """ Add a warning to the analysis """

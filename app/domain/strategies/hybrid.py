@@ -22,6 +22,7 @@ class HybridStrategy(BaseStrategy):
         self.signal_weights = {
             "llm": 0.35,
             "vector_similarity": 0.25,
+            "historical_success": 0.30,
             "slack_context": 0.10,
         }
 
@@ -42,6 +43,9 @@ class HybridStrategy(BaseStrategy):
             signals["vector_similarity"] = 0.0
 
         signals["historical_success"] = self._calculate_historical_score(
+            analysis.similar_incidents
+        )
+        signals["slack_context"] = self._calculate_slack_score(
             analysis.slack_threads
         )
 
