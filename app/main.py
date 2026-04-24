@@ -25,6 +25,7 @@ from app.middleware import (
     BrotliOrGzipMiddleware,
 )
 from app.dependencies import get_engine, get_db, get_event_processor
+from app.api import router as api_router
 
 structlog.configure(
     processors=[
@@ -344,12 +345,12 @@ async def root():
             "redoc": "/redoc" if not settings.is_production else None,
             "health": "/health",
             "ready": "/ready",
+            "api": "/api",
             "api_v1": "/api/v1",
             "api_v2": "/api/v2",
         },
         "endpoints": {
             "v1": {
-                "auth": "/api/v1/auth",
                 "webhooks": "/api/v1/webhook",
                 "analytics": "/api/v1/analytics",
                 "incidents": "/api/v1/incidents",
@@ -361,80 +362,21 @@ async def root():
             },
             "v2": {
                 "oauth": "/api/v2/oauth",
+                "repositories": "/api/v2/repositories",
+                "workflows": "/api/v2/workflows",
+                "prs": "/api/v2/prs",
+                "analytics": "/api/v2/analytics",
+                "webhooks": "/api/v2/webhooks",
             },
         },
     }
 
-
-from app.api.v1.webhook import router as webhook_router
-from app.api.v1.analytics import router as analytics_router
-from app.api.v1.incidents import router as incidents_router
-from app.api.v1.pr_management import router as pr_management_router
-from app.api.v1.user_details import router as user_details_router
-from app.api.v1.logs import router as logs_router
-from app.api.v1.jobs import router as jobs_router
-from app.api.v1.events import router as events_router
-from app.api.v2 import router as v2_router
-
 # Note: Auth is now handled by Zitadel OIDC (see app/auth/)
-
-app.include_router(
-    incidents_router,
-    prefix="/api/v1",
-    tags=["Incidents"],
-)
-
-app.include_router(
-    webhook_router,
-    prefix="/api/v1",
-    tags=["Webhooks"],
-)
-
-app.include_router(
-    analytics_router,
-    prefix="/api/v1",
-    tags=["Analytics"],
-)
-
-app.include_router(
-    pr_management_router,
-    prefix="/api/v1",
-    tags=["PR Management"],
-)
-
-app.include_router(
-    user_details_router,
-    prefix="/api/v1",
-    tags=["User Details"],
-)
-
-app.include_router(
-    logs_router,
-    prefix="/api/v1",
-    tags=["Application Logs"],
-)
-
-app.include_router(
-    jobs_router,
-    prefix="/api/v1",
-    tags=["Background Jobs"],
-)
-
-app.include_router(
-    events_router,
-    prefix="/api/v1",
-    tags=["Events"],
-)
-
-app.include_router(
-    v2_router,
-    prefix="/api",
-)
+app.include_router(api_router)
 
 logger.info(
     "routers_registered",
     routers=[
-        "/api/v1/auth",
         "/api/v1/incidents",
         "/api/v1/webhook",
         "/api/v1/analytics",
@@ -444,6 +386,11 @@ logger.info(
         "/api/v1/jobs",
         "/api/v1/events",
         "/api/v2/oauth",
+        "/api/v2/repositories",
+        "/api/v2/workflows",
+        "/api/v2/prs",
+        "/api/v2/analytics",
+        "/api/v2/webhooks",
     ],
     webhook_endpoints=[
         "/api/v1/webhook/github/{user_id}",
