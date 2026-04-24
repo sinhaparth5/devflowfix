@@ -53,16 +53,19 @@ async def lifespan(app: FastAPI):
         "application_startup",
         environment=settings.environment.value,
         version=settings.version,
-        database_url=settings.database_url.split("@")[-1],
+        database_url=settings.get_database_url_safe(),
     )
 
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-            logger.info("database_connection_verified")
-    except Exception as e:
-        logger.error("database_connection_failed", error=str(e))
+    if settings.database_configured:
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                logger.info("database_connection_verified")
+        except Exception as e:
+            logger.error("database_connection_failed", error=str(e))
+    else:
+        logger.warning("database_not_configured_starting_in_stateless_mode")
 
     yield
 
@@ -276,6 +279,7 @@ async def health_check():
         status="healthy",
         timestamp=datetime.now(timezone.utc),
         version=settings.version,
+        database="configured" if settings.database_configured else "disabled",
     )
 
 
@@ -289,15 +293,18 @@ async def readiness_check():
     health_status = "healthy"
     components = {}
     
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        components["database"] = "healthy"
-    except Exception as e:
-        logger.error("database_health_check_failed", error=str(e))
-        components["database"] = "unhealthy"
-        health_status = "degraded"
+    if settings.database_configured:
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            components["database"] = "healthy"
+        except Exception as e:
+            logger.error("database_health_check_failed", error=str(e))
+            components["database"] = "unhealthy"
+            health_status = "degraded"
+    else:
+        components["database"] = "disabled"
     
     if settings.nvidia_api_key:
         components["nvidia_api"] = "configured"

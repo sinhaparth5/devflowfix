@@ -24,6 +24,12 @@ def get_engine():
     global _engine
     if _engine is None:
         try:
+            if not settings.database_configured:
+                raise ConfigurationError(
+                    "DATABASE_URL",
+                    "Database is not configured",
+                )
+
             # Build connect_args based on database provider
             connect_args = {
                 "connect_timeout": 10,  # Connection timeout
@@ -67,6 +73,12 @@ def get_session_local():
 
 
 def get_db() -> Generator[Session, None, None]:
+    if not settings.database_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database-backed functionality is unavailable because DATABASE_URL is not configured",
+        )
+
     SessionLocal = get_session_local()
     db = SessionLocal()
     try:

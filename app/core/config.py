@@ -809,6 +809,8 @@ class Settings(BaseSettings):
     @classmethod
     def validate_database_url(cls, v: str) -> str:
         """Validate database URL format."""
+        if not v:
+            return v
         if not v.startswith(("postgresql://", "postgresql+psycopg2://")):
             raise ValueError("Database URL must start with postgresql://")
         return v
@@ -844,6 +846,11 @@ class Settings(BaseSettings):
     def is_staging(self) -> bool:
         """Check if running in staging environment."""
         return self.environment == Environment.STAGING
+
+    @property
+    def database_configured(self) -> bool:
+        """Check whether a database URL is configured."""
+        return bool(self.database_url)
     
     @property
     def confidence_threshold(self) -> float:
@@ -987,6 +994,8 @@ class Settings(BaseSettings):
         Returns:
             Database URL with password masked
         """
+        if not self.database_url:
+            return "not_configured"
         if "@" in self.database_url:
             # Split and mask password
             parts = self.database_url.split("@")
