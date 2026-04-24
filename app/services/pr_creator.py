@@ -659,7 +659,7 @@ class PRCreatorService:
                         ref=branch,
                     )
                     sha = current_file["sha"]
-                except:
+                except Exception:
                     sha = None
                 
                 # Use recommended value for config

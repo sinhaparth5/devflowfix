@@ -282,7 +282,14 @@ class GitHubLogExtractor:
                     
                     try:
                         logs = await client.download_job_logs(owner=owner, repo=repo, job_id=job_id)
-                        print(f"\n{'='*80}\nGitHub Logs for Job: {job_name} (ID: {job_id})\n{'='*80}\n{logs}\n{'='*80}\n")
+                        logger.debug(
+                            "github_job_logs_downloaded",
+                            repo=f"{owner}/{repo}",
+                            run_id=run_id,
+                            job_id=job_id,
+                            job_name=job_name,
+                            log_length=len(logs),
+                        )
                         
                         errors = self.parser.extract_errors(logs)
                         

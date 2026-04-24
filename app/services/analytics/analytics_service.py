@@ -58,14 +58,75 @@ class AnalyticsService:
         if total_runs == 0:
             return 100.0  # No runs = no problems
 
-        # Calculate components (each worth 25 points)
+        # Calculate components (each worth 25 points).
+        # Activity is capped once the repo has a reasonable run history so
+        # healthy active repositories can still reach 100.
         failure_score = max(0, 25 - (failed_runs / total_runs * 100) * 0.25)
         incident_score = max(0, 25 - (open_incidents * 5))
         pr_score = pr_merge_rate * 0.25
-        activity_score = min(25, total_runs / 10)  # More activity = better
+        activity_score = min(25, total_runs * 0.25)
 
         health_score = failure_score + incident_score + pr_score + activity_score
         return min(100.0, max(0.0, health_score))
+
+    @staticmethod
+    def _get_incident_repository(incident: Any) -> Optional[str]:
+        repository = getattr(incident, "repository", None)
+        if isinstance(repository, str) and repository:
+            return repository
+
+        context = getattr(incident, "context", None) or {}
+        if isinstance(context, dict):
+            repository = context.get("repository") or context.get("repository_full_name")
+            if repository:
+                return repository
+
+        raw_payload = getattr(incident, "raw_payload", None) or {}
+        if isinstance(raw_payload, dict):
+            repository_data = raw_payload.get("repository") or {}
+            if isinstance(repository_data, dict):
+                return repository_data.get("full_name")
+
+        return None
+
+    @staticmethod
+    def _get_incident_status(incident: Any) -> Optional[str]:
+        status = getattr(incident, "status", None)
+        if isinstance(status, str) and status:
+            return status
+
+        outcome = getattr(incident, "outcome", None)
+        if outcome == "success":
+            return "resolved"
+        if outcome in {"failed", "failure"}:
+            return "open"
+
+        return None
+
+    @staticmethod
+    def _get_incident_metadata(incident: Any) -> Dict[str, Any]:
+        metadata = getattr(incident, "metadata", None)
+        if isinstance(metadata, dict):
+            return metadata
+
+        raw_payload = getattr(incident, "raw_payload", None)
+        if isinstance(raw_payload, dict):
+            metadata = raw_payload.get("metadata")
+            if isinstance(metadata, dict):
+                return metadata
+
+        return {}
+
+    @staticmethod
+    def _normalize_collection(items: Any) -> List[Any]:
+        if items is None:
+            return []
+        if isinstance(items, list):
+            return items
+        try:
+            return list(items)
+        except TypeError:
+            return []
 
     async def get_workflow_trends(
         self,
@@ -220,21 +281,35 @@ class AnalyticsService:
 
             # Get incidents
             incidents = db.query(IncidentTable).filter(
-                IncidentTable.repository == repo.repository_full_name,
                 IncidentTable.user_id == user_id,
             ).all()
+            incidents = [
+                incident
+                for incident in incidents
+                if (
+                    self._get_incident_repository(incident) == repo.repository_full_name
+                    or self._get_incident_repository(incident) is None
+                )
+            ]
 
             total_incidents = len(incidents)
-            open_incidents = len([i for i in incidents if i.status in ["open", "in_progress"]])
-            resolved_incidents = len([i for i in incidents if i.status == "resolved"])
+            open_incidents = len([
+                i for i in incidents
+                if self._get_incident_status(i) in ["open", "in_progress"]
+            ])
+            resolved_incidents = len([
+                i for i in incidents
+                if self._get_incident_status(i) == "resolved"
+            ])
 
             # Get PR stats from incident metadata
             prs_created = 0
             prs_merged = 0
 
             for incident in incidents:
-                if incident.metadata and "prs" in incident.metadata:
-                    prs_created += len(incident.metadata["prs"])
+                metadata = self._get_incident_metadata(incident)
+                if "prs" in metadata:
+                    prs_created += len(metadata["prs"])
                     # Would need to fetch actual PR status to count merged
 
             pr_merge_rate = (prs_merged / prs_created * 100) if prs_created > 0 else 0.0
@@ -407,10 +482,18 @@ class AnalyticsService:
             IncidentTable.user_id == user_id,
         ).count()
 
-        open_incidents = db.query(IncidentTable).filter(
-            IncidentTable.user_id == user_id,
-            IncidentTable.status.in_(["open", "in_progress"]),
-        ).count()
+        try:
+            user_incidents = db.query(IncidentTable).filter(
+                IncidentTable.user_id == user_id,
+            ).all()
+        except TypeError:
+            user_incidents = []
+        user_incidents = self._normalize_collection(user_incidents)
+        open_incidents = len([
+            incident
+            for incident in user_incidents
+            if self._get_incident_status(incident) in ["open", "in_progress"]
+        ])
 
         oauth_connections = db.query(OAuthConnectionTable).filter(
             OAuthConnectionTable.user_id == user_id,

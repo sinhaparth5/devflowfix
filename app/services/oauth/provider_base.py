@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 import secrets
+from urllib.parse import urlencode
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -99,8 +100,8 @@ class OAuthProvider(ABC):
         extra_params = self._get_extra_auth_params()
         params.update(extra_params)
 
-        # Build query string
-        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        # Encode parameters so redirect URIs and scopes are valid for providers.
+        query_string = urlencode(params)
         return f"{self.authorize_url}?{query_string}"
 
     def _get_extra_auth_params(self) -> Dict[str, str]:

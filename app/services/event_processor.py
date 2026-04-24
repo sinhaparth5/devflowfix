@@ -499,9 +499,7 @@ class EventProcessor:
                 # Handle both list and dict formats
                 if isinstance(code_changes_list, dict):
                     code_changes_list = [code_changes_list]
-                
-                print(f"\n📝 Code Changes ({len(code_changes_list)} file(s)):")
-                
+
                 for idx, code_change in enumerate(code_changes_list, 1):
                     if not isinstance(code_change, dict):
                         continue

@@ -179,16 +179,16 @@ class DecisionService:
         self.strategy = StrategyFactory.create(strategy_type=strategy_type)
         logger.info("strategy_change_by_type", strategy_type=strategy_type.value)
 
-    def set_strategy_by_environment(self, enironment: Environment):
-        self.strategy = StrategyFactory.create(environment=enironment)
-        logger.info("strategy_changed_by_environment", enironment=enironment.value)
+    def set_strategy_by_environment(self, environment: Environment):
+        self.strategy = StrategyFactory.create(environment=environment)
+        logger.info("strategy_changed_by_environment", environment=environment.value)
 
     def get_decision_summary(self, decision: DecisionResult) -> dict:
         return {
             "should_auto_fix": decision.should_auto_fix,
             "confidence": f"{decision.confidence:.2f}",
             "strategy": decision.strategy_name,
-            "requiers_approval": decision.requires_approval,
+            "requires_approval": decision.requires_approval,
             "escalate": decision.escalate,
             "reason": decision.reason,
             "warnings": decision.warnings,

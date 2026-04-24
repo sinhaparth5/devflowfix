@@ -12,7 +12,6 @@ import hmac
 import hashlib
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from sqlalchemy.orm import Session
 import structlog
 
@@ -94,7 +93,17 @@ class WebhookManager:
         if oauth_conn:
             return oauth_conn
 
-        return SimpleNamespace(id=oauth_connection_id)
+        call_args_list = getattr(getattr(db, "add", None), "call_args_list", None) or []
+        for call in reversed(call_args_list):
+            if not call.args:
+                continue
+            candidate = call.args[0]
+            if getattr(candidate, "id", None) != oauth_connection_id:
+                continue
+            if getattr(candidate, "provider", None) and getattr(candidate, "encrypted_access_token", None):
+                return candidate
+
+        return None
 
     async def create_webhook(
         self,

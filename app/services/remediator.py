@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 
 from app.core.models.incident import Incident
 from app.core.models.remediation import RemediationPlan, RemediationResult
-from app.core.enums import Outcome
+from app.core.enums import Outcome, RiskLevel, map_failure_to_action
 from app.core.config import Settings
 from app.domain.remediators.base import BaseRemediator
+from app.domain.remediators.factory import RemediatorFactory
 from app.domain.validators.pre_remediation import PreRemediationValidator
 from app.domain.validators.post_remediation import PostRemediationValidator
 from app.domain.validators.blast_radius import BlastRadiusValidator
@@ -85,6 +86,62 @@ class RemediatorService:
         self.pre_validator = pre_validator or PreRemediationValidator(settings=self.settings)
         self.post_validator = post_validator or PostRemediationValidator(settings=self.settings)
         self.blast_radius_validator = blast_radius_validator or BlastRadiusValidator()
+        self.remediator_factory = RemediatorFactory(settings=self.settings)
+
+    async def execute(
+        self,
+        incident: Incident,
+        analysis,
+        context,
+        db: Optional[Session] = None,
+        user_id: Optional[str] = None,
+    ) -> RemediationResult:
+        """
+        Compatibility entrypoint used by EventProcessor.
+
+        Builds a remediation plan from the analysis result, selects the matching
+        domain remediator, and delegates to `execute_remediation`.
+        """
+        if not incident.failure_type and getattr(analysis, "category", None):
+            incident.failure_type = analysis.category
+        if incident.fixability is None and getattr(analysis, "fixability", None):
+            incident.fixability = analysis.fixability
+        if incident.confidence is None and getattr(analysis, "confidence", None) is not None:
+            incident.confidence = analysis.confidence
+        if not incident.root_cause and getattr(analysis, "root_cause", None):
+            incident.root_cause = analysis.root_cause
+
+        action_type = map_failure_to_action(analysis.category)
+        plan = RemediationPlan(
+            action_type=action_type,
+            parameters={
+                "owner": incident.context.get("owner"),
+                "repo": incident.context.get("repo"),
+                "run_id": incident.context.get("run_id"),
+                "branch": incident.context.get("branch") or getattr(context, "branch", None),
+                "repository": incident.context.get("repository") or getattr(context, "repository", None),
+            },
+            risk_level=RiskLevel.MEDIUM,
+            requires_approval=getattr(context, "requires_approval", False),
+            reason=getattr(analysis, "root_cause", None),
+        )
+
+        repository = plan.parameters.get("repository")
+        if repository and "/" in repository:
+            owner, repo = repository.split("/", 1)
+            if not plan.parameters.get("owner"):
+                plan.parameters["owner"] = owner
+            if not plan.parameters.get("repo"):
+                plan.parameters["repo"] = repo
+
+        remediator = self.remediator_factory.create(action_type)
+        return await self.execute_remediation(
+            incident=incident,
+            plan=plan,
+            remediator=remediator,
+            db=db,
+            user_id=user_id,
+        )
     
     async def execute_remediation(
         self,

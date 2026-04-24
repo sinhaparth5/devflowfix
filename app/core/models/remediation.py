@@ -32,7 +32,7 @@ class RemediationPlan:
 
     # Context
     reason: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def is_safe_to_execute(self) -> bool:
         """ Check if plan safe to execute without approval. """
@@ -74,7 +74,7 @@ class RemediationResult:
     outcome: Outcome
 
     # Timing
-    executed_at: datetime = field(default_factory=datetime.utcnow)
+    executed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     duration_seconds: Optional[int] = None
 
     # Details
@@ -157,7 +157,7 @@ class RollbackSnapshot:
     snapshot_type: str = "generic"
 
     # Timing
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at : Optional[datetime] = None
 
     # Status
@@ -187,4 +187,3 @@ class RollbackSnapshot:
             "created_at": self.created_at.isoformat(),
             "is_restored": self.is_restored,
         }
-

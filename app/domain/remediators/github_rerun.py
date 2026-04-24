@@ -132,6 +132,18 @@ class GitHubRerunRemediator(BaseRemediator):
             or incident.context.get("repository_name")
             or incident.raw_payload.get("repository", {}).get("name")
         )
+
+        repository_full_name = (
+            plan.get_parameter("repository")
+            or incident.context.get("repository")
+            or incident.raw_payload.get("repository", {}).get("full_name")
+        )
+        if repository_full_name and "/" in repository_full_name:
+            owner, repo = repository_full_name.split("/", 1)
+            if not params.get("owner"):
+                params["owner"] = owner
+            if not params.get("repo") or params.get("repo") == repository_full_name:
+                params["repo"] = repo
         
         params["run_id"] = (
             plan.get_parameter("run_id")
