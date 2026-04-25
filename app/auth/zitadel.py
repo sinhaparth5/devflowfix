@@ -428,6 +428,8 @@ async def get_current_active_user(
             last_login_at=now,
         )
         db.add(db_user)
+        # Flush parent row first so the user_details FK can resolve reliably.
+        db.flush()
 
         # Auto-create empty user_details row
         user_details = UserDetailsTable(
