@@ -702,6 +702,11 @@ class Settings(BaseSettings):
         default="*",
         description="Allowed CORS origins (comma-separated or single value)"
     )
+
+    allowed_hosts: str = Field(
+        default="",
+        description="Allowed host headers for TrustedHostMiddleware (comma-separated)"
+    )
     
     cors_allow_credentials: bool = Field(
         default=True,
