@@ -3,6 +3,7 @@
 
 import json
 from typing import Optional, Any, List
+from urllib.parse import urlparse
 import structlog
 import redis.asyncio as redis
 from redis.asyncio import Redis
@@ -44,7 +45,7 @@ class RedisCache:
             decode_responses: Decode responses to strings
         """
         self.url = url or settings.redis_url or settings.redis.url
-        self.password = password or settings.redis.password
+        self.password = self._resolve_password(password)
         self.max_connections = max_connections or settings.redis_max_connections
         self.socket_timeout = socket_timeout or settings.redis_socket_timeout
         self.decode_responses = decode_responses
@@ -68,6 +69,19 @@ class RedisCache:
                 user = creds[1].split(":")[0]
                 return f"{creds[0]}://{user}:***@{parts[1]}"
         return url
+
+    def _resolve_password(self, password: Optional[str]) -> Optional[str]:
+        """Resolve Redis password without leaking unrelated env values into local URLs."""
+        parsed = urlparse(self.url)
+        if parsed.password:
+            return None
+
+        resolved = password if password is not None else settings.redis.password
+        if resolved is None:
+            return None
+
+        resolved = resolved.strip()
+        return resolved or None
 
     async def connect(self) -> None:
         """Establish connection to Redis."""

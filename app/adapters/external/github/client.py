@@ -80,7 +80,7 @@ class GitHubClient:
             enable_cache: Enable Redis caching for API responses
         """
         self.settings = settings or Settings()
-        self.token = token or self.settings.github.token
+        self.token = token or self.settings.github_token or self.settings.github.token
         self.timeout = timeout
         self.max_retries = max_retries
         self.enable_cache = enable_cache
