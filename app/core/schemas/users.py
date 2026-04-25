@@ -372,3 +372,45 @@ class UserDetailsResponse(UserDetailsBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ManualUserCreateRequest(UserDetailsBase):
+    """Schema for creating a local user and user details in one request."""
+    user_id: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Optional external or local user identifier. If omitted, one is generated automatically.",
+    )
+    email: EmailStr = Field(..., description="User email address")
+    full_name: Optional[str] = Field(None, max_length=255, description="Full name")
+    avatar_url: Optional[str] = Field(None, max_length=500, description="Avatar URL")
+    role: str = Field(default="user", max_length=50, description="Local authorization role")
+    is_active: bool = Field(default=True, description="Whether the user is active")
+    is_verified: bool = Field(default=False, description="Whether the user's email is verified")
+    oauth_provider: str = Field(default="manual", max_length=50, description="Auth provider label")
+    oauth_id: Optional[str] = Field(None, max_length=255, description="Provider user id")
+    organization_id: Optional[str] = Field(None, max_length=50, description="Organization ID")
+    team_id: Optional[str] = Field(None, max_length=50, description="Team ID")
+    github_username: Optional[str] = Field(None, max_length=50, description="GitHub username")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ManualUserCreateResponse(BaseModel):
+    """Response schema for manual local user creation."""
+    user_id: str
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: str
+    is_active: bool
+    is_verified: bool
+    oauth_provider: str
+    oauth_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    team_id: Optional[str] = None
+    github_username: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    user_details: UserDetailsResponse
+
+    model_config = ConfigDict(from_attributes=True)

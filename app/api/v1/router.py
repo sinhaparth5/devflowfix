@@ -9,6 +9,7 @@ from .jobs import router as jobs_router
 from .logs import router as logs_router
 from .pr_management import router as pr_management_router
 from .user_details import router as user_details_router
+from .users import router as users_router
 from .webhook import router as webhook_router
 
 
@@ -18,6 +19,7 @@ router.include_router(incidents_router)
 router.include_router(webhook_router)
 router.include_router(analytics_router)
 router.include_router(pr_management_router)
+router.include_router(users_router)
 router.include_router(user_details_router)
 router.include_router(logs_router)
 router.include_router(jobs_router)
