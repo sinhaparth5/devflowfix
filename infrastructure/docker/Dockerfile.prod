@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1.4
+
+FROM python:3.13-slim-bookworm AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+COPY requirements.txt ./
+RUN pip install --user --no-cache-dir -r requirements.txt && \
+    find /root/.local -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
+    find /root/.local -name "*.pyc" -delete && \
+    find /root/.local -name "*.pyo" -delete && \
+    find /root/.local -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+COPY app ./app
+COPY alembic.ini ./
+RUN python -m compileall -q app/
+
+FROM python:3.13-slim-bookworm
+
+LABEL maintainer="Parth Sinha and Shine Gupta" \
+      org.opencontainers.image.title="DevFlowFix" \
+      org.opencontainers.image.description="Autonomous AI agent for CI/CD failure remediation" \
+      org.opencontainers.image.vendor="Parth Sinha and Shine Gupta"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app" \
+    PYTHONOPTIMIZE=2 \
+    PYTHONHASHSEED=random \
+    WEB_CONCURRENCY=4 \
+    PATH="/home/appuser/.local/bin:$PATH"
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser appuser \
+    && mkdir -p /home/appuser/.local \
+    && chown -R appuser:appuser /home/appuser
+
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+COPY --from=builder --chown=appuser:appuser /build/app ./app
+COPY --from=builder --chown=appuser:appuser /build/alembic.ini ./alembic.ini
+
+RUN chmod -R 555 /home/appuser/.local && chmod -R 555 /app
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
+
+EXPOSE 8000
+
+CMD ["gunicorn", "app.main:app", "--config", "app/gunicorn_conf.py"]

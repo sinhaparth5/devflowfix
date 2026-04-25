@@ -1,0 +1,58 @@
+name: devflowfix
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    container_name: devflowfix-backend
+    hostname: devflowfix-backend
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      PYTHONPATH: /app
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-}
+      ZITADEL_ISSUER: ${ZITADEL_ISSUER:-}
+      ZITADEL_CLIENT_ID: ${ZITADEL_CLIENT_ID:-}
+      ZITADEL_PROJECT_ID: ${ZITADEL_PROJECT_ID:-}
+      ZITADEL_API_URL: ${ZITADEL_API_URL:-}
+      BACKBLAZE_KEY_ID: ${BACKBLAZE_KEY_ID:-}
+      BACKBLAZE_APPLICATION_KEY: ${BACKBLAZE_APPLICATION_KEY:-}
+      BACKBLAZE_BUCKET_NAME: ${BACKBLAZE_BUCKET_NAME:-}
+      BACKBLAZE_ENDPOINT_URL: ${BACKBLAZE_ENDPOINT_URL:-}
+      BACKBLAZE_REGION: ${BACKBLAZE_REGION:-us-west-001}
+      APP_HOST: ${APP_HOST:-127.0.0.1}
+      APP_PORT: ${APP_PORT:-8000}
+    ports:
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_HOST_PORT:-8000}:8000"
+    networks:
+      devflowfix:
+      openmailer-runtime:
+      safeline-ce:
+        aliases:
+          - devflowfix-backend
+
+networks:
+  devflowfix:
+    external: true
+    name: ${DEVFLOWFIX_NETWORK:-devflowfix}
+  openmailer-runtime:
+    external: true
+    name: ${OPENMAILER_NETWORK:-openmailer-runtime}
+  safeline-ce:
+    external: true
+    name: ${SAFELINE_NETWORK:-safeline-ce}

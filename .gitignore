@@ -237,7 +237,8 @@ docker-compose.override.yml
 # Local development
 .local/
 tmp/
-temp/
+temp/#
+deploy/
 
 # Coverage reports
 coverage.xml
