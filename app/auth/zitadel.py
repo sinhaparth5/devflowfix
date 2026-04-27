@@ -17,10 +17,12 @@ import httpx
 import structlog
 from cachetools import TTLCache
 from fastapi import Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.auth.config import get_zitadel_settings, ZitadelSettings
+from app.adapters.cache.redis import get_redis_cache
 from app.dependencies import get_db
 from app.adapters.database.postgres.models import UserTable, UserDetailsTable
 
@@ -32,6 +34,7 @@ _http_client: Optional[httpx.AsyncClient] = None
 # Last login update throttle interval (avoid updating on every request)
 LAST_LOGIN_UPDATE_INTERVAL = timedelta(minutes=5)
 ANALYTICS_ACTIVE_USER_CACHE_TTL_SECONDS = 120
+USERINFO_CACHE_TTL_SECONDS = 600
 
 # Security scheme for OpenAPI docs
 security = HTTPBearer(auto_error=False)
@@ -142,6 +145,31 @@ async def close_http_client() -> None:
         logger.info("http_client_closed")
 
 
+def _userinfo_cache_key(token: str) -> str:
+    return f"auth:userinfo:{token}"
+
+
+def _active_user_cache_key(user_id: str) -> str:
+    return f"auth:active-user:{user_id}"
+
+
+async def _get_redis_json(key: str) -> Optional[dict]:
+    try:
+        cached = await get_redis_cache().get(key)
+    except Exception as exc:
+        logger.warning("redis_auth_cache_read_failed", key=key, error=str(exc))
+        return None
+
+    return cached if isinstance(cached, dict) else None
+
+
+async def _set_redis_json(key: str, payload: dict, ttl: int) -> None:
+    try:
+        await get_redis_cache().set(key, jsonable_encoder(payload), ttl=ttl)
+    except Exception as exc:
+        logger.warning("redis_auth_cache_write_failed", key=key, error=str(exc))
+
+
 class ZitadelAuth:
     """
     Zitadel authentication handler for PKCE/Public Client applications.
@@ -214,6 +242,11 @@ class ZitadelAuth:
             email=result.get("email"),
         )
         self._userinfo_cache[token] = result
+        await _set_redis_json(
+            _userinfo_cache_key(token),
+            result,
+            ttl=USERINFO_CACHE_TTL_SECONDS,
+        )
         return result
 
     async def get_userinfo(self, token: str) -> dict:
@@ -245,6 +278,12 @@ class ZitadelAuth:
         cached = self._userinfo_cache.get(token)
         if cached:
             logger.debug("userinfo_cache_hit", sub=cached.get("sub"))
+            return cached
+
+        cached = await _get_redis_json(_userinfo_cache_key(token))
+        if cached:
+            self._userinfo_cache[token] = cached
+            logger.debug("userinfo_redis_cache_hit", sub=cached.get("sub"))
             return cached
 
         try:
@@ -348,13 +387,26 @@ def _build_db_user_snapshot(db_user: UserTable) -> dict:
     }
 
 
-def _cache_active_user_snapshot(user_id: str, db_user: UserTable) -> None:
+async def _cache_active_user_snapshot(user_id: str, db_user: UserTable) -> None:
     auth = get_auth()
-    auth._active_user_cache[user_id] = _build_db_user_snapshot(db_user)
+    snapshot = _build_db_user_snapshot(db_user)
+    auth._active_user_cache[user_id] = snapshot
+    await _set_redis_json(
+        _active_user_cache_key(user_id),
+        snapshot,
+        ttl=ANALYTICS_ACTIVE_USER_CACHE_TTL_SECONDS,
+    )
 
 
-def _get_cached_active_user_snapshot(user_id: str) -> Optional[dict]:
-    return get_auth()._active_user_cache.get(user_id)
+async def _get_cached_active_user_snapshot(user_id: str) -> Optional[dict]:
+    cached = get_auth()._active_user_cache.get(user_id)
+    if cached:
+        return cached
+
+    cached = await _get_redis_json(_active_user_cache_key(user_id))
+    if cached:
+        get_auth()._active_user_cache[user_id] = cached
+    return cached
 
 
 async def get_current_user(
@@ -523,7 +575,7 @@ async def get_current_active_user(
 
     # Attach database user to ZitadelUser
     user.db_user = db_user
-    _cache_active_user_snapshot(user.sub, db_user)
+    await _cache_active_user_snapshot(user.sub, db_user)
 
     return {
         "user": user,
@@ -541,7 +593,7 @@ async def get_current_active_analytics_user(
     Uses normal token validation, but caches the active-user DB snapshot briefly so
     multiple dashboard requests do not repeat DB sync and backfill work.
     """
-    cached = _get_cached_active_user_snapshot(user.sub)
+    cached = await _get_cached_active_user_snapshot(user.sub)
     if cached:
         if not cached.get("is_active", True):
             raise HTTPException(

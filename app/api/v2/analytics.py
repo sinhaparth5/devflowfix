@@ -7,12 +7,16 @@ Analytics API Endpoints
 Provides metrics, trends, and dashboard data.
 """
 
+import hashlib
+import json
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 import structlog
 
+from app.adapters.cache.redis import get_redis_cache
 from app.core.schemas.analytics import (
     WorkflowTrendResponse,
     RepositoryHealthMetrics,
@@ -27,6 +31,36 @@ from app.services.analytics.analytics_service import AnalyticsService
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
+ANALYTICS_CACHE_TTL_SECONDS = 120
+
+
+def _build_cache_key(route_name: str, user_id: str, **params: object) -> str:
+    normalized = json.dumps(
+        jsonable_encoder(params),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"analytics:v2:{route_name}:{user_id}:{digest}"
+
+
+async def _get_cached_response(cache_key: str):
+    try:
+        return await get_redis_cache().get(cache_key)
+    except Exception as exc:
+        logger.warning("analytics_cache_read_failed", cache_key=cache_key, error=str(exc))
+        return None
+
+
+async def _set_cached_response(cache_key: str, payload: object) -> None:
+    try:
+        await get_redis_cache().set(
+            cache_key,
+            jsonable_encoder(payload),
+            ttl=ANALYTICS_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("analytics_cache_write_failed", cache_key=cache_key, error=str(exc))
 
 
 def get_analytics_service() -> AnalyticsService:
@@ -69,6 +103,17 @@ async def get_workflow_trends(
     try:
         user = current_user_data["user"]
         service = get_analytics_service()
+        cache_key = _build_cache_key(
+            "workflow-trends",
+            user.user_id,
+            days=days,
+            period=period,
+            repository_connection_id=repository_connection_id,
+        )
+
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return WorkflowTrendResponse(**cached)
 
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
@@ -82,7 +127,9 @@ async def get_workflow_trends(
             repository_connection_id=repository_connection_id,
         )
 
-        return WorkflowTrendResponse(**trends)
+        response = WorkflowTrendResponse(**trends)
+        await _set_cached_response(cache_key, response)
+        return response
 
     except Exception as e:
         logger.error(
@@ -123,6 +170,15 @@ async def get_repository_health(
     try:
         user = current_user_data["user"]
         service = get_analytics_service()
+        cache_key = _build_cache_key(
+            "repository-health",
+            user.user_id,
+            repository_connection_id=repository_connection_id,
+        )
+
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return RepositoryHealthListResponse(**cached)
 
         health_metrics = await service.get_repository_health_metrics(
             db=db,
@@ -139,11 +195,13 @@ async def get_repository_health(
             if repositories else 0.0
         )
 
-        return RepositoryHealthListResponse(
+        response = RepositoryHealthListResponse(
             repositories=repositories,
             total_repositories=len(repositories),
             avg_health_score=avg_health_score,
         )
+        await _set_cached_response(cache_key, response)
+        return response
 
     except Exception as e:
         logger.error(
@@ -186,6 +244,16 @@ async def get_incident_trends(
     try:
         user = current_user_data["user"]
         service = get_analytics_service()
+        cache_key = _build_cache_key(
+            "incident-trends",
+            user.user_id,
+            days=days,
+            period=period,
+        )
+
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return IncidentTrendResponse(**cached)
 
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
@@ -198,7 +266,9 @@ async def get_incident_trends(
             period=period,
         )
 
-        return IncidentTrendResponse(**trends)
+        response = IncidentTrendResponse(**trends)
+        await _set_cached_response(cache_key, response)
+        return response
 
     except Exception as e:
         logger.error(
@@ -238,13 +308,20 @@ async def get_system_health(
     try:
         user = current_user_data["user"]
         service = get_analytics_service()
+        cache_key = _build_cache_key("system-health", user.user_id)
+
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return SystemHealthResponse(**cached)
 
         health = await service.get_system_health(
             db=db,
             user_id=user.user_id,
         )
 
-        return SystemHealthResponse(**health)
+        response = SystemHealthResponse(**health)
+        await _set_cached_response(cache_key, response)
+        return response
 
     except Exception as e:
         logger.error(
@@ -283,6 +360,11 @@ async def get_dashboard_summary(
     try:
         user = current_user_data["user"]
         service = get_analytics_service()
+        cache_key = _build_cache_key("dashboard-summary", user.user_id)
+
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return DashboardSummaryResponse(**cached)
 
         # Get system health
         system_health = await service.get_system_health(
@@ -324,7 +406,7 @@ async def get_dashboard_summary(
             reverse=True,
         )[:5]
 
-        return DashboardSummaryResponse(
+        response = DashboardSummaryResponse(
             system_health=SystemHealthResponse(**system_health),
             workflow_stats=workflow_trends["summary"],
             incident_stats=incident_trends["summary"],
@@ -338,6 +420,8 @@ async def get_dashboard_summary(
             recent_fixes=[],
             generated_at=datetime.now(timezone.utc),
         )
+        await _set_cached_response(cache_key, response)
+        return response
 
     except Exception as e:
         logger.error(

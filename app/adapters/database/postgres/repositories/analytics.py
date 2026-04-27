@@ -365,6 +365,7 @@ class AnalyticsRepository:
     
     def get_remediation_success_by_action_type(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
@@ -373,7 +374,13 @@ class AnalyticsRepository:
                 RemediationHistoryTable.action_type,
                 func.count(RemediationHistoryTable.history_id).label('total'),
                 func.count(case((RemediationHistoryTable.success == True, 1))).label('successful'),
+            ).join(
+                IncidentTable,
+                RemediationHistoryTable.incident_id == IncidentTable.incident_id,
             )
+
+            if user_id:
+                query = query.filter(IncidentTable.user_id == user_id)
             
             if start_date:
                 query = query.filter(RemediationHistoryTable.executed_at >= start_date)
@@ -400,11 +407,15 @@ class AnalyticsRepository:
     
     def get_feedback_summary(
         self,
+        user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         try:
             query = self.session.query(FeedbackTable)
+
+            if user_id:
+                query = query.filter(FeedbackTable.user_id == user_id)
             
             if start_date:
                 query = query.filter(FeedbackTable.created_at >= start_date)
@@ -420,6 +431,8 @@ class AnalyticsRepository:
             ).filter(
                 FeedbackTable.rating.isnot(None)
             )
+            if user_id:
+                avg_rating = avg_rating.filter(FeedbackTable.user_id == user_id)
             if start_date:
                 avg_rating = avg_rating.filter(FeedbackTable.created_at >= start_date)
             if end_date:

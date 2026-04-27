@@ -1,14 +1,18 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
+import hashlib
+import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 import structlog
 import uuid
 
+from app.adapters.cache.redis import get_redis_cache
 from app.dependencies import get_db, get_analytics_repository
 from app.adapters.database.postgres.repositories.analytics import AnalyticsRepository
 from app.adapters.database.postgres.repositories.jobs import JobRepository
@@ -20,6 +24,36 @@ from app.services.export import CSVExportService, PDFExportService
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
+ANALYTICS_CACHE_TTL_SECONDS = 120
+
+
+def _build_cache_key(route_name: str, user_id: str, **params: object) -> str:
+    normalized = json.dumps(
+        jsonable_encoder(params),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"analytics:v1:{route_name}:{user_id}:{digest}"
+
+
+async def _get_cached_response(cache_key: str):
+    try:
+        return await get_redis_cache().get(cache_key)
+    except Exception as exc:
+        logger.warning("analytics_cache_read_failed", cache_key=cache_key, error=str(exc))
+        return None
+
+
+async def _set_cached_response(cache_key: str, payload: object) -> None:
+    try:
+        await get_redis_cache().set(
+            cache_key,
+            jsonable_encoder(payload),
+            ttl=ANALYTICS_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("analytics_cache_write_failed", cache_key=cache_key, error=str(exc))
 
 
 @router.get(
@@ -34,9 +68,16 @@ async def get_dashboard(
     """Get dashboard summary for the current authenticated user only."""
     analytics_repo = AnalyticsRepository(db)
     user = current_user["user"]
+    cache_key = _build_cache_key("dashboard", user.user_id)
 
     try:
-        return analytics_repo.get_dashboard_summary(user_id=user.user_id)
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_dashboard_summary(user_id=user.user_id)
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_dashboard_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -72,12 +113,25 @@ async def get_stats(
             )
 
     try:
-        return analytics_repo.get_incident_stats(
+        cache_key = _build_cache_key(
+            "stats",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+            source=source,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incident_stats(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
             source=source_enum,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_stats_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -102,11 +156,23 @@ async def get_breakdown_by_source(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_incidents_by_source(
+        cache_key = _build_cache_key(
+            "breakdown-source",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incidents_by_source(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_breakdown_by_source_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -131,11 +197,23 @@ async def get_breakdown_by_severity(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_incidents_by_severity(
+        cache_key = _build_cache_key(
+            "breakdown-severity",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incidents_by_severity(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_breakdown_by_severity_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -160,11 +238,23 @@ async def get_breakdown_by_failure_type(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_incidents_by_failure_type(
+        cache_key = _build_cache_key(
+            "breakdown-failure-type",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incidents_by_failure_type(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_breakdown_by_failure_type_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -189,11 +279,23 @@ async def get_breakdown_by_outcome(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_incidents_by_outcome(
+        cache_key = _build_cache_key(
+            "breakdown-outcome",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incidents_by_outcome(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_breakdown_by_outcome_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -218,11 +320,23 @@ async def get_trends(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_incident_trends(
+        cache_key = _build_cache_key(
+            "trends",
+            user.user_id,
+            days=days,
+            granularity=granularity,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_incident_trends(
             user_id=user.user_id,
             days=days,
             granularity=granularity,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_trends_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -258,12 +372,25 @@ async def get_mttr(
             )
 
     try:
-        return analytics_repo.get_mttr(
+        cache_key = _build_cache_key(
+            "mttr",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+            source=source,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_mttr(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
             source=source_enum,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_mttr_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -288,11 +415,23 @@ async def get_auto_fix_rate(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_auto_fix_rate(
+        cache_key = _build_cache_key(
+            "auto-fix-rate",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_auto_fix_rate(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_auto_fix_rate_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -317,11 +456,23 @@ async def get_confidence_distribution(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_confidence_distribution(
+        cache_key = _build_cache_key(
+            "confidence-distribution",
+            user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_confidence_distribution(
             user_id=user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_confidence_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -346,10 +497,23 @@ async def get_remediation_success(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_remediation_success_by_action_type(
+        cache_key = _build_cache_key(
+            "remediation-success",
+            user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_remediation_success_by_action_type(
+            user_id=user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_remediation_success_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -374,10 +538,23 @@ async def get_feedback_summary(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_feedback_summary(
+        cache_key = _build_cache_key(
+            "feedback-summary",
+            user.user_id,
             start_date=start_date,
             end_date=end_date,
         )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_feedback_summary(
+            user_id=user.user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_feedback_summary_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -403,12 +580,25 @@ async def get_top_failure_types(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_top_failure_types(
+        cache_key = _build_cache_key(
+            "top-failure-types",
+            user.user_id,
+            limit=limit,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_top_failure_types(
             user_id=user.user_id,
             limit=limit,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_top_failure_types_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -434,12 +624,25 @@ async def get_top_repositories(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_top_repositories(
+        cache_key = _build_cache_key(
+            "top-repositories",
+            user.user_id,
+            limit=limit,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_top_repositories(
             user_id=user.user_id,
             limit=limit,
             start_date=start_date,
             end_date=end_date,
         )
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_top_repositories_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -463,7 +666,14 @@ async def get_hourly_distribution(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_hourly_distribution(user_id=user.user_id, days=days)
+        cache_key = _build_cache_key("hourly-distribution", user.user_id, days=days)
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_hourly_distribution(user_id=user.user_id, days=days)
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_hourly_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -487,7 +697,14 @@ async def get_daily_distribution(
     user = current_user["user"]
 
     try:
-        return analytics_repo.get_daily_distribution(user_id=user.user_id, days=days)
+        cache_key = _build_cache_key("daily-distribution", user.user_id, days=days)
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
+        result = analytics_repo.get_daily_distribution(user_id=user.user_id, days=days)
+        await _set_cached_response(cache_key, result)
+        return result
     except Exception as e:
         logger.error("get_daily_distribution_failed", error=str(e), user_id=user.user_id)
         raise HTTPException(
@@ -513,6 +730,11 @@ async def get_analytics_overview(
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     try:
+        cache_key = _build_cache_key("overview", user.user_id, days=days)
+        cached = await _get_cached_response(cache_key)
+        if cached is not None:
+            return cached
+
         # SECURITY: Pass user_id to all repository methods
         stats = analytics_repo.get_incident_stats(user_id=user.user_id, start_date=start_date)
         by_source = analytics_repo.get_incidents_by_source(user_id=user.user_id, start_date=start_date)
@@ -524,7 +746,7 @@ async def get_analytics_overview(
         top_failures = analytics_repo.get_top_failure_types(user_id=user.user_id, limit=5, start_date=start_date)
         hourly = analytics_repo.get_hourly_distribution(user_id=user.user_id, days=days)
         
-        return {
+        result = {
             "period": {
                 "start_date": start_date.isoformat(),
                 "end_date": datetime.now(timezone.utc).isoformat(),
@@ -545,6 +767,8 @@ async def get_analytics_overview(
             "hourly_distribution": hourly,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+        await _set_cached_response(cache_key, result)
+        return result
         
     except Exception as e:
         logger.error("get_analytics_overview_failed", error=str(e))
