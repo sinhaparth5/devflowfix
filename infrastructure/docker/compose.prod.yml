@@ -37,14 +37,41 @@ services:
       BACKBLAZE_REGION: ${BACKBLAZE_REGION:-us-west-001}
       APP_HOST: ${APP_HOST:-127.0.0.1}
       APP_PORT: ${APP_PORT:-8000}
-    ports:
-      - "${APP_BIND_IP:-127.0.0.1}:${APP_HOST_PORT:-8000}:8000"
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    expose:
+      - "8000"
     networks:
       devflowfix:
       openmailer-runtime:
       safeline-ce:
         aliases:
           - devflowfix-backend
+
+  nginx:
+    image: nginx:1.29.8-alpine
+    container_name: devflowfix-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - devflowfix
 
 networks:
   devflowfix:
