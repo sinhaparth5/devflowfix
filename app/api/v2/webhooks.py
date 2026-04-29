@@ -115,8 +115,12 @@ async def github_webhook(
     except HTTPException:
         raise
     except Exception as exc:
+        db.rollback()
         logger.error("webhook_processing_error", error=str(exc), exc_info=True)
-        return {"status": "error", "message": str(exc)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal webhook processing error",
+        ) from exc
 
 
 @router.post(
@@ -176,5 +180,9 @@ async def gitlab_webhook(
     except HTTPException:
         raise
     except Exception as exc:
+        db.rollback()
         logger.error("gitlab_webhook_processing_error", error=str(exc), exc_info=True)
-        return {"status": "error", "message": str(exc)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal webhook processing error",
+        ) from exc
