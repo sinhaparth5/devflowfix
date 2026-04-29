@@ -18,7 +18,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Copy and install dependencies first (better layer caching)
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt && \
+RUN pip install --user --no-cache-dir -r requirements.txt debugpy && \
     find /root/.local -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
     find /root/.local -type d -name "*.dist-info" -exec rm -rf {}/RECORD {} + 2>/dev/null || true && \
     find /root/.local -name "*.pyc" -delete && \
