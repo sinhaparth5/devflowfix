@@ -65,6 +65,6 @@ jobs:
             test -f compose.prod.yml || { echo "Missing compose.prod.yml on VPS"; exit 1; }
             docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" -p "${{ secrets.GHCR_TOKEN }}"
             export BACKEND_IMAGE="${IMAGE_NAME}:latest"
-            docker compose --env-file devflowfix.env -f compose.prod.yml pull backend
-            docker compose --env-file devflowfix.env -f compose.prod.yml up -d --no-deps backend
+            docker compose --env-file devflowfix.env -f compose.prod.yml pull devflowfix-backend
+            docker compose --env-file devflowfix.env -f compose.prod.yml up -d --no-deps devflowfix-backend
             docker image prune -f

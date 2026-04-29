@@ -1,7 +1,7 @@
 name: devflowfix
 
 services:
-  backend:
+  devflowfix-backend:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     container_name: devflowfix-backend
     hostname: devflowfix-backend
@@ -52,7 +52,7 @@ services:
     container_name: devflowfix-nginx
     restart: unless-stopped
     depends_on:
-      - backend
+      - devflowfix-backend
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_HOST_PORT:-8000}:8000"
     volumes:
