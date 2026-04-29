@@ -4,7 +4,7 @@
 from typing import Optional, Any, List
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 import secrets
 
 from app.core.enums import Environment, LogLevel
@@ -262,7 +262,7 @@ class Settings(BaseSettings):
     
     Example:
         DATABASE_URL=postgresql://user:pass@localhost:5432/db
-        ENVIRONMENT=production
+        ENVIRONMENT=prod
     """
     
     model_config = SettingsConfigDict(
@@ -277,6 +277,27 @@ class Settings(BaseSettings):
         default=Environment.DEVELOPMENT,
         description="Deployment environment (dev, staging, prod)"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_environment_aliases(cls, data: Any) -> Any:
+        """Normalize legacy environment aliases before field validation."""
+        if not isinstance(data, dict):
+            return data
+
+        value = data.get("environment")
+        if not isinstance(value, str):
+            return data
+
+        env = value.strip().lower()
+        if env == "production":
+            data["environment"] = Environment.PRODUCTION.value
+        elif env == "development":
+            data["environment"] = Environment.DEVELOPMENT.value
+        elif env in {"stage", "stg"}:
+            data["environment"] = Environment.STAGING.value
+
+        return data
     
     app_name: str = Field(default="DevFlowFix", alias="APP_NAME")
     app_version: str = Field(default="1.0.0", alias="APP_VERSION")

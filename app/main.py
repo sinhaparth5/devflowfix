@@ -3,7 +3,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from fastapi import FastAPI, Request, status, Header, Depends
+from fastapi import FastAPI, Request, Response, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -77,13 +77,16 @@ async def lifespan(app: FastAPI):
     logger.info("application_shutdown")
 
 
+api_docs_enabled = settings.enable_api_docs and not settings.is_production
+
+
 app = FastAPI(
     title="DevFlowFix",
     description="Autonomous AI agent for CI/CD failure detection, analysis, and remediation",
     version=settings.version,
-    docs_url="/docs" if settings.enable_api_docs else None,
-    redoc_url="/redoc" if settings.enable_api_docs else None,
-    openapi_url="/openapi.json" if settings.enable_api_docs else None,
+    docs_url="/docs" if api_docs_enabled else None,
+    redoc_url="/redoc" if api_docs_enabled else None,
+    openapi_url="/openapi.json" if api_docs_enabled else None,
     lifespan=lifespan,
     swagger_ui_parameters={
         "persistAuthorization": True,
@@ -284,6 +287,14 @@ async def health_check():
     )
 
 
+@app.head(
+    "/health",
+    include_in_schema=False,
+)
+async def health_check_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
+
+
 @app.get(
     "/ready",
     response_model=HealthResponse,
@@ -341,8 +352,8 @@ async def root():
         "environment": settings.environment.value,
         "description": "Autonomous AI agent for CI/CD failure remediation",
         "links": {
-            "docs": "/docs" if not settings.is_production else None,
-            "redoc": "/redoc" if not settings.is_production else None,
+            "docs": "/docs" if api_docs_enabled else None,
+            "redoc": "/redoc" if api_docs_enabled else None,
             "health": "/health",
             "ready": "/ready",
             "api": "/api",
@@ -370,6 +381,14 @@ async def root():
             },
         },
     }
+
+
+@app.head(
+    "/",
+    include_in_schema=False,
+)
+async def root_head() -> Response:
+    return Response(status_code=status.HTTP_200_OK)
 
 # Note: Auth is now handled by Zitadel OIDC (see app/auth/)
 app.include_router(api_router)
