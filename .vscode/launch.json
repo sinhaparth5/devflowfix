@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Attach to Docker",
+            "name": "Devflowfix debugger Docker",
             "type": "debugpy",
             "request": "attach",
             "connect": {
