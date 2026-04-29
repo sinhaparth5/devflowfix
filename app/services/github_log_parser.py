@@ -3,6 +3,7 @@
 
 import re
 import hashlib
+import asyncio
 from typing import List, Dict, Optional, Set, Any
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -364,28 +365,58 @@ class GitHubLogParser:
         return self.format_compact_summary(groups)
 
 class GitHubLogExtractor:
-    def __init__(self, github_token: Optional[str] = None):
+    def __init__(
+        self,
+        github_token: Optional[str] = None,
+        *,
+        job_fetch_attempts: int = 3,
+        job_fetch_delay_seconds: float = 2.0,
+    ):
         from app.core.config import settings
         self.parser = GitHubLogParser()
         self.github_token = github_token or settings.github_token
+        self.job_fetch_attempts = job_fetch_attempts
+        self.job_fetch_delay_seconds = job_fetch_delay_seconds
     
     async def fetch_and_parse_logs(self, owner: str, repo: str, run_id: int) -> str:
         from app.adapters.external.github.client import GitHubClient
         
         try:
             async with GitHubClient(token=self.github_token) as client:
-                jobs = await client.list_jobs_for_workflow_run(
-                    owner=owner,
-                    repo=repo,
-                    run_id=run_id,
-                    filter="latest",
-                    per_page=100,
-                )
-                
-                failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
+                jobs = []
+                failed_jobs = []
+
+                for attempt in range(1, self.job_fetch_attempts + 1):
+                    jobs = await client.list_jobs_for_workflow_run(
+                        owner=owner,
+                        repo=repo,
+                        run_id=run_id,
+                        filter="latest",
+                        per_page=100,
+                    )
+                    failed_jobs = [job for job in jobs if job.get("conclusion") == "failure"]
+
+                    if failed_jobs:
+                        break
+
+                    if attempt < self.job_fetch_attempts:
+                        logger.info(
+                            "github_failed_jobs_not_ready_retrying",
+                            repo=f"{owner}/{repo}",
+                            run_id=run_id,
+                            attempt=attempt,
+                            job_count=len(jobs),
+                        )
+                        await asyncio.sleep(self.job_fetch_delay_seconds)
                 
                 if not failed_jobs:
-                    logger.warning("github_no_failed_jobs", repo=f"{owner}/{repo}", run_id=run_id)
+                    logger.warning(
+                        "github_no_failed_jobs",
+                        repo=f"{owner}/{repo}",
+                        run_id=run_id,
+                        job_count=len(jobs),
+                        job_conclusions=[job.get("conclusion") for job in jobs[:10]],
+                    )
                     return ""
                 
                 all_errors = []

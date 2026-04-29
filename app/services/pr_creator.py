@@ -122,10 +122,21 @@ class PRCreatorService:
         token_manager = GitHubTokenManager(db=db_session)
         token = token_manager.get_token(user_id, owner, repo)
         if not token:
-            raise ValueError(
-                f"No GitHub token found for user {user_id} and repository {owner}/{repo}. "
-                "Please register your token via /api/v1/pr-management/tokens/register"
-            )
+            from app.core.config import settings
+
+            token = settings.github_token
+            if token:
+                logger.info(
+                    "pr_creation_using_settings_github_token",
+                    user_id=user_id,
+                    repository=f"{owner}/{repo}",
+                )
+            else:
+                raise ValueError(
+                    f"No GitHub token found for user {user_id} and repository {owner}/{repo}. "
+                    "Please register your token via /api/v1/pr-management/tokens/register "
+                    "or configure GITHUB_TOKEN for local development."
+                )
         
         # Create authenticated GitHub client for this repo
         github_client = GitHubClient(token=token)

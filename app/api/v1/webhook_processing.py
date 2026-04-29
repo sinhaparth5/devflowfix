@@ -18,6 +18,7 @@ async def process_webhook_async(
     source: IncidentSource,
     incident_id: str,
     user_id: str,
+    github_token: str | None = None,
 ) -> None:
     try:
         if source == IncidentSource.GITHUB:
@@ -27,7 +28,7 @@ async def process_webhook_async(
                 run_id = context.get("run_id")
                 if repo and run_id and "/" in repo:
                     owner, repo_name = repo.split("/", 1)
-                    log_extractor = GitHubLogExtractor()
+                    log_extractor = GitHubLogExtractor(github_token=github_token)
                     workflow_logs = await log_extractor.fetch_and_parse_logs(
                         owner=owner,
                         repo=repo_name,
@@ -80,6 +81,7 @@ def process_webhook_sync(
     source: IncidentSource,
     incident_id: str,
     user_id: str,
+    github_token: str | None = None,
 ) -> None:
     import asyncio
 
@@ -93,6 +95,7 @@ def process_webhook_sync(
                 source=source,
                 incident_id=incident_id,
                 user_id=user_id,
+                github_token=github_token,
             )
         )
     except Exception as exc:

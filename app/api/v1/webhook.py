@@ -94,7 +94,7 @@ async def receive_github_webhook(
         background_tasks=background_tasks,
         event_processor=event_processor,
         db=db,
-        process_webhook_sync=process_webhook_sync,
+        process_webhook_sync=process_webhook_async,
     )
 
 
@@ -144,7 +144,7 @@ async def receive_argocd_webhook(
         payload=payload,
         background_tasks=background_tasks,
         event_processor=event_processor,
-        process_webhook_sync=process_webhook_sync,
+        process_webhook_sync=process_webhook_async,
     )
 
 
@@ -169,7 +169,7 @@ async def receive_kubernetes_webhook(
         payload=payload,
         background_tasks=background_tasks,
         event_processor=event_processor,
-        process_webhook_sync=process_webhook_sync,
+        process_webhook_sync=process_webhook_async,
     )
 
 
@@ -224,7 +224,7 @@ async def receive_generic_webhook(
         x_webhook_source=x_webhook_source,
         background_tasks=background_tasks,
         event_processor=event_processor,
-        process_webhook_sync=process_webhook_sync,
+        process_webhook_sync=process_webhook_async,
     )
 
 

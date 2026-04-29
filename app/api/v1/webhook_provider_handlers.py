@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.core.enums import IncidentSource
 from app.core.schemas.webhook import WebhookResponse
 from app.services.event_processor import EventProcessor
+from app.services.github_token_manager import GitHubTokenManager
 from app.services.oauth.token_manager import get_token_manager
 from app.services.workflow.workflow_tracker import WorkflowTracker
 from app.utils.app_logger import AppLogger
@@ -247,6 +248,23 @@ async def receive_github_webhook_impl(
     normalized_payload = extract_github_payload(payload, x_github_event)
     normalized_payload["raw_payload"] = payload
     normalized_payload.setdefault("context", {})["user_id"] = user_id
+    github_token = None
+    repository = normalized_payload.get("context", {}).get("repository", "")
+    if repository and "/" in repository:
+        owner, repo_name = repository.split("/", 1)
+        github_token = GitHubTokenManager(db=db).get_token(user_id, owner, repo_name)
+        if github_token:
+            logger.debug(
+                "github_webhook_user_token_selected",
+                user_id=user_id,
+                repository=repository,
+            )
+        else:
+            logger.info(
+                "github_webhook_user_token_not_found_using_settings_fallback",
+                user_id=user_id,
+                repository=repository,
+            )
 
     app_logger.info(
         f"Webhook queued for background processing (incident will be: {incident_id})",
@@ -265,6 +283,7 @@ async def receive_github_webhook_impl(
         IncidentSource.GITHUB,
         incident_id,
         user_id,
+        github_token,
     )
     logger.info("github_webhook_queued", incident_id=incident_id, event_type=x_github_event, user_id=user_id)
     return WebhookResponse(
