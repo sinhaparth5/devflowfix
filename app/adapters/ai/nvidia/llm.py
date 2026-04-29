@@ -196,6 +196,7 @@ class LLMAdapter:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 system_prompt=SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
             )
 
             # Extract text
@@ -316,18 +317,83 @@ class LLMAdapter:
             else:
                 raise ValueError("No JSON object found in LLM response")
         
-        try:
-            classification = json.loads(json_text)
+        classification = self._try_parse_json_object(json_text)
+        if classification is not None:
             logger.debug("llm_response_parsed", classification_keys=list(classification.keys()))
             return classification
-            
-        except json.JSONDecodeError as e:
-            logger.error(
-                "llm_response_parse_failed",
-                error=str(e),
-                response_text=json_text[:500],
-            )
-            raise ValueError(f"Failed to parse JSON response: {e}")
+
+        repaired = re.sub(r",\s*([}\]])", r"\1", json_text)
+        classification = self._try_parse_json_object(repaired)
+        if classification is not None:
+            logger.warning("llm_response_recovered_by_removing_trailing_commas")
+            logger.debug("llm_response_parsed", classification_keys=list(classification.keys()))
+            return classification
+
+        balanced_prefix = self._extract_balanced_json_prefix(json_text)
+        if balanced_prefix:
+            classification = self._try_parse_json_object(balanced_prefix)
+            if classification is not None:
+                logger.warning("llm_response_recovered_from_balanced_prefix")
+                logger.debug("llm_response_parsed", classification_keys=list(classification.keys()))
+                return classification
+
+        logger.error(
+            "llm_response_parse_failed",
+            error="Unable to recover JSON object",
+            response_text=json_text[:500],
+        )
+        return {
+            "failure_type": "unknown",
+            "root_cause": text[:200],
+            "fixability": "unknown",
+            "confidence": 0.3,
+            "recommended_action": "notify_only",
+            "reasoning": "LLM returned malformed JSON; using conservative fallback classification.",
+            "key_indicators": [],
+            "suggested_parameters": {},
+        }
+
+    @staticmethod
+    def _try_parse_json_object(text: str) -> Optional[Dict[str, Any]]:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _extract_balanced_json_prefix(text: str) -> Optional[str]:
+        depth = 0
+        in_string = False
+        escape = False
+        start_idx: Optional[int] = None
+
+        for idx, char in enumerate(text):
+            if start_idx is None:
+                if char == "{":
+                    start_idx = idx
+                    depth = 1
+                continue
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start_idx:idx + 1]
+
+        return None
     
     def _parse_solution_response(self, text: str) -> Dict[str, Any]:
         """
@@ -499,6 +565,7 @@ class LLMAdapter:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 system_prompt=SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
             )
 
             text = self.client.extract_text(response)
@@ -569,6 +636,7 @@ class LLMAdapter:
                 max_tokens=1000,
                 temperature=self.temperature,
                 system_prompt=SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
             )
 
             text = self.client.extract_text(response)
@@ -687,6 +755,14 @@ class LLMAdapter:
                 tokens_used = getattr(response.usage, 'total_tokens', None)
 
             solution = self._parse_solution_response(text)
+
+            if not repository_code:
+                logger.info(
+                    "llm_solution_code_changes_dropped_without_repository_code",
+                    failure_type=failure_type,
+                    proposed_code_changes=len(solution.get("code_changes") or []),
+                )
+                solution["code_changes"] = []
 
             # Cache the result
             if self.enable_cache and self.cache:

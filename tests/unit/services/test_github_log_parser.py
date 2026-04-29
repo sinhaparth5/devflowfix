@@ -45,6 +45,22 @@ def test_extract_annotation_errors_prefers_structured_file_context() -> None:
     assert "Python exception" in errors[0].error_message
 
 
+def test_extract_errors_normalizes_runner_paths_and_line_numbers() -> None:
+    parser = GitHubLogParser()
+
+    errors = parser.extract_errors(
+        "##[group]Run pytest\n"
+        "src/main.py:42: error expected status code 200 (@pytest/assertion)\n"
+        '  File "/home/runner/work/example-repo/example-repo/src/main.py", line 42, in <module>\n'
+        "Error: Process completed with exit code 1\n"
+    )
+
+    file_paths = {error.file_path for error in errors}
+    assert "src/main.py" in file_paths
+    assert "/home/runner/work/example-repo/example-repo/src/main.py" not in file_paths
+    assert any(error.line_number == 42 for error in errors if error.file_path == "src/main.py")
+
+
 @pytest.mark.asyncio
 async def test_fetch_and_parse_logs_includes_failed_steps_and_annotations() -> None:
     extractor = GitHubLogExtractor(github_token="test-token")

@@ -43,7 +43,7 @@ class GitHubLogParser:
         (r'##\[error\]([^\n]+)', 'github_error', 'high'),
         (r'Error: Process completed with exit code (\d+)', 'exit_code', 'high'),
         # Lint error: more specific pattern with bounded quantifiers
-        (r'(\d{1,6}:\d{1,6})\s+error\s+([^\n]{1,500}?)\s+(@[\w/-]{1,100})', 'lint_error', 'medium'),
+        (r'(\d{1,6}(?::\d{1,6})?)\s+error\s+([^\n]{1,500}?)\s+\(?(@[\w/-]{1,100})\)?', 'lint_error', 'medium'),
         (r'(?i)fatal[:\s]([^\n]+)', 'fatal', 'critical'),
         (r'(?i)panic:', 'panic', 'critical'),
         (r'(?i)traceback \(most recent call last\)', 'python_exception', 'high'),
@@ -63,6 +63,29 @@ class GitHubLogParser:
             (re.compile(pattern, re.IGNORECASE), error_type, severity)
             for pattern, error_type, severity in self.ERROR_PATTERNS
         ]
+
+    @staticmethod
+    def normalize_file_path(file_path: Optional[str]) -> Optional[str]:
+        if not file_path:
+            return None
+
+        normalized = file_path.replace("\\", "/").strip()
+
+        runner_markers = [
+            "/home/runner/work/",
+            "/github/workspace/",
+        ]
+        for marker in runner_markers:
+            marker_index = normalized.find(marker)
+            if marker_index == -1:
+                continue
+
+            tail = normalized[marker_index + len(marker):]
+            tail_parts = [part for part in tail.split("/") if part]
+            if len(tail_parts) >= 3:
+                return "/".join(tail_parts[2:])
+
+        return normalized
 
     @staticmethod
     def extract_check_run_id(job: Dict[str, Any]) -> Optional[int]:
@@ -184,11 +207,11 @@ class GitHubLogParser:
     
     def extract_file_path(self, line: str) -> Optional[str]:
         match = re.search(self.FILE_PATH_PATTERN, line)
-        return match.group(1) if match else None
+        return self.normalize_file_path(match.group(1) if match else None)
     
     def parse_lint_error(self, line: str, step_name: str) -> Optional[ErrorBlock]:
         """Parse lint errors with ReDoS-safe regex patterns."""
-        match = re.search(r'(\d{1,6}:\d{1,6})\s+error\s+([^\n]{1,500}?)\s+(@[\w/-]{1,100})', line)
+        match = re.search(r'(\d{1,6}(?::\d{1,6})?)\s+error\s+([^\n]{1,500}?)\s+\(?(@[\w/-]{1,100})\)?', line)
         if match:
             location, message, rule = match.groups()
             file_path = self.extract_file_path(line)
@@ -221,20 +244,43 @@ class GitHubLogParser:
                 continue
 
             file_path = self.extract_file_path(cleaned)
-            if file_path and not re.search(r'\d+:\d+\s+error', cleaned):
+            if file_path:
                 current_file = file_path
 
+            file_line_error_match = re.search(
+                r'(?P<file>\S+\.(?:tsx?|jsx?|py|go|java|rb|php|cs|cpp|c|h)):(?P<line>\d+):\s+error\s+(?P<message>[^\n]{1,500}?)\s+\(?(?P<rule>@[\w/-]{1,100})\)?',
+                cleaned,
+            )
+            if file_line_error_match:
+                matched_file = self.normalize_file_path(file_line_error_match.group("file"))
+                error = ErrorBlock(
+                    step_name=current_step,
+                    error_type="lint_error",
+                    error_message=f"{file_line_error_match.group('message')} ({file_line_error_match.group('rule')})",
+                    file_path=matched_file,
+                    line_number=int(file_line_error_match.group("line")),
+                    severity="medium",
+                )
+
+                error_hash = error.get_hash()
+                if error_hash not in seen_hashes:
+                    seen_hashes.add(error_hash)
+                    errors.append(error)
+                current_file = matched_file
+                continue
+
             # Use bounded quantifiers to prevent ReDoS
-            lint_match = re.search(r'(\d{1,6}):(\d{1,6})\s+error\s+([^\n]{1,500}?)\s+(@[\w/-]{1,100})', cleaned)
+            lint_match = re.search(r'(?:(\d{1,6}):(\d{1,6})|(\d{1,6}))\s+error\s+([^\n]{1,500}?)\s+\(?(@[\w/-]{1,100})\)?', cleaned)
             if lint_match and current_file:
-                line_num, col_num, message, rule = lint_match.groups()
+                line_num, col_num, single_line_num, message, rule = lint_match.groups()
+                resolved_line = line_num or single_line_num
                 
                 error = ErrorBlock(
                     step_name=current_step,
                     error_type='lint_error',
                     error_message=f"{message} ({rule})",
                     file_path=current_file,
-                    line_number=int(line_num) if line_num else None,
+                    line_number=int(resolved_line) if resolved_line else None,
                     severity='medium'
                 )
                 
@@ -258,11 +304,16 @@ class GitHubLogParser:
                     if line_match:
                         line_num = int(line_match.group(1) or line_match.group(2))
                     
+                    if line_num is None:
+                        inline_line_match = re.search(r':(\d+)(?::\d+)?\b', cleaned)
+                        if inline_line_match:
+                            line_num = int(inline_line_match.group(1))
+
                     error = ErrorBlock(
                         step_name=current_step,
                         error_type=error_type,
                         error_message=error_msg.strip(),
-                        file_path=current_file,
+                        file_path=self.normalize_file_path(current_file),
                         line_number=line_num,
                         severity=severity
                     )

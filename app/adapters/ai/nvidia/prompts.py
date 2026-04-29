@@ -91,7 +91,7 @@ def _summarize_context(context: Dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "- none"
 
 # Classification prompt template
-CLASSIFICATION_PROMPT = """Analyze the following CI/CD incident and provide a structured classification.
+CLASSIFICATION_PROMPT = """Analyze the following CI/CD incident and return valid JSON only.
 
 ## Incident Details
 
@@ -106,9 +106,7 @@ CLASSIFICATION_PROMPT = """Analyze the following CI/CD incident and provide a st
 
 {similar_incidents_section}
 
-## Your Task
-
-Classify this incident and provide a JSON response with the following structure:
+## Return this JSON shape
 
 {{
   "failure_type": "<one of: {failure_types}>",
@@ -123,61 +121,18 @@ Classify this incident and provide a JSON response with the following structure:
   }}
 }}
 
-## Guidelines
+## Rules
 
-1. **failure_type**: Choose the most specific failure type based on the error log
-2. **root_cause**: Provide a clear, actionable description (max 200 chars)
-3. **fixability**: 
-   - "auto" if can be fixed automatically (restart, rollback, cache clear, etc.)
-   - "manual" if requires human intervention (code fix, config change, etc.)
-   - "unknown" if insufficient information
-4. **confidence**: Your confidence in the classification (0.0 - 1.0)
-   - Consider: error message clarity, context completeness, similar incidents
-   - Be conservative: if uncertain, lower the confidence
-5. **recommended_action**: Best remediation action based on the failure type
-6. **reasoning**: Explain why you chose this classification (2-3 sentences)
-7. **key_indicators**: List 2-5 key indicators that led to your classification
-8. **suggested_parameters**: Parameters needed for the remediation action
+- Choose the most specific failure_type supported by the evidence.
+- root_cause must be concise and actionable, max 200 chars.
+- fixability is "auto", "manual", or "unknown".
+- Be conservative with confidence. Lower it if evidence is incomplete.
+- reasoning should be 1-2 short sentences.
+- key_indicators should contain 2-5 concrete signals from the incident.
+- suggested_parameters should contain only clearly supported values.
+- Return valid JSON only. No markdown.
 
-## Examples
-
-### Example 1: ImagePullBackOff
-```json
-{{
-  "failure_type": "imagepullbackoff",
-  "root_cause": "Container image not found in registry",
-  "fixability": "manual",
-  "confidence": 0.95,
-  "recommended_action": "k8s_update_image",
-  "reasoning": "Error message clearly indicates 'ErrImagePull' and 'ImagePullBackOff'. The image tag may be incorrect or the image doesn't exist in the registry. Requires verification and correction of image reference.",
-  "key_indicators": ["ErrImagePull", "ImagePullBackOff", "failed to pull image", "not found"],
-  "suggested_parameters": {{
-    "namespace": "production",
-    "deployment": "my-app",
-    "verify_image_exists": true
-  }}
-}}
-```
-
-### Example 2: CrashLoopBackOff
-```json
-{{
-  "failure_type": "crashloopbackoff",
-  "root_cause": "Application crashing on startup due to configuration error",
-  "fixability": "auto",
-  "confidence": 0.85,
-  "recommended_action": "k8s_restart_pod",
-  "reasoning": "Pod is repeatedly crashing after startup. Error indicates missing configuration. A restart may resolve transient issues, but if it persists, manual config fix is needed.",
-  "key_indicators": ["CrashLoopBackOff", "Back-off restarting failed container", "Exit code 1"],
-  "suggested_parameters": {{
-    "namespace": "production",
-    "pod_name": "my-app-abc123",
-    "wait_time_seconds": 30
-  }}
-}}
-```
-
-### Example 3: GitHub Workflow Build Failure
+## Example
 ```json
 {{
   "failure_type": "buildfailure",
@@ -194,32 +149,7 @@ Classify this incident and provide a JSON response with the following structure:
 }}
 ```
 
-### Example 4: ArgoCD Sync Failed
-```json
-{{
-  "failure_type": "syncfailed",
-  "root_cause": "Kubernetes manifest validation failed - invalid resource definition",
-  "fixability": "manual",
-  "confidence": 0.92,
-  "recommended_action": "notify_only",
-  "reasoning": "ArgoCD sync failed due to invalid Kubernetes manifest. The error indicates a validation issue that requires manual review and fix of the manifest file. Cannot be auto-remediated.",
-  "key_indicators": ["sync failed", "invalid manifest", "ValidationError", "unknown field"],
-  "suggested_parameters": {{
-    "application": "my-app",
-    "notify_channel": "#devops-alerts"
-  }}
-}}
-```
-
-## Important Notes
-
-- **Be conservative with confidence**: If uncertain, use lower confidence (0.5-0.7)
-- **Consider context**: Use all available information (similar incidents, context, etc.)
-- **Auto-fixability**: Only mark as "auto" if remediation is safe and reliable
-- **Transient vs Persistent**: Distinguish between transient issues (network, rate limits) and persistent ones (code bugs, config errors)
-- **Output valid JSON**: Ensure your response is valid, parseable JSON
-
-Now analyze the incident above and provide your classification."""
+Now analyze the incident and return the JSON."""
 
 def build_classification_prompt(
     source: str,
@@ -239,8 +169,26 @@ def build_classification_prompt(
     Returns:
         Formatted prompt string
     """
-    # Format context
-    context_str = "\n".join([f"- {k}: {v}" for k, v in context.items() if v])
+    priority_keys = [
+        "repository",
+        "branch",
+        "workflow",
+        "event_type",
+        "run_id",
+        "commit_sha",
+        "changed_files",
+        "error_files",
+    ]
+    context_lines = []
+    for key in priority_keys:
+        value = context.get(key)
+        if value in (None, "", [], {}, ()):
+            continue
+        rendered = str(value)
+        if len(rendered) > 800:
+            rendered = rendered[:800] + "...[truncated]"
+        context_lines.append(f"- {key}: {rendered}")
+    context_str = "\n".join(context_lines) if context_lines else "- none"
     
     # Format similar incidents section
     similar_section = ""
@@ -262,7 +210,7 @@ def build_classification_prompt(
     # Build final prompt
     prompt = CLASSIFICATION_PROMPT.format(
         source=source,
-        error_log=error_log[:4000],  # Truncate to avoid token limits
+        error_log=error_log[:1600],
         context=context_str,
         similar_incidents_section=similar_section,
         failure_types=failure_types,
@@ -510,6 +458,7 @@ Return only valid JSON. No prose. No markdown.
 - For delete-only fixes, use an empty string for fixed_code.
 - If a section does not apply, use [] or null.
 - Keep each text field short and actionable.
+- If no repository code is provided, prefer code_changes: [] unless the exact current_code is present in the supplied incident data.
 """
     
     return prompt

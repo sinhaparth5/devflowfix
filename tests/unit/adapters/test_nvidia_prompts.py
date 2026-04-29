@@ -37,3 +37,29 @@ def test_solution_prompt_prioritizes_compact_context_and_truncation() -> None:
     assert "src/file_0.py" in prompt
     assert "...[truncated]" in prompt
     assert len(prompt) < 7000
+
+
+def test_classification_prompt_is_compact_without_large_example_block() -> None:
+    from app.adapters.ai.nvidia.prompts import build_classification_prompt
+
+    prompt = build_classification_prompt(
+        source="github",
+        error_log="Error: Process completed with exit code 1\n" * 200,
+        context={
+            "repository": "owner/repo",
+            "branch": "main",
+            "workflow": "CI",
+            "event_type": "workflow_run",
+            "run_id": 123,
+            "commit_sha": "a" * 40,
+            "changed_files": ["src/main.py"],
+            "error_files": {"src/main.py": [{"message": "AssertionError", "line": 42}]},
+            "large_blob": "x" * 3000,
+        },
+        similar_incidents=[],
+    )
+
+    assert "### Example 2" not in prompt
+    assert "### Example 4" not in prompt
+    assert "large_blob" not in prompt
+    assert len(prompt) < 5000
