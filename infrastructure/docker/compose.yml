@@ -30,6 +30,7 @@ services:
     working_dir: /app
     ports:
       - "8001:8000"
+      - "5678:5678"
     environment:
       ENVIRONMENT: dev
       PYTHONPATH: /app
@@ -37,6 +38,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_PASSWORD: ""
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      PYTHONOPTIMIZE: "0"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -46,7 +48,9 @@ services:
         condition: service_healthy
     volumes:
       - ../..:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      python -m debugpy --listen 0.0.0.0:5678
+      -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   ngrok:
     image: ngrok/ngrok:latest

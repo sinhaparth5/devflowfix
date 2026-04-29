@@ -3,6 +3,7 @@
 
 import time
 import json
+import ipaddress
 from typing import Callable
 import brotli
 import gzip as gzip_lib
@@ -16,6 +17,59 @@ from app.core.config import settings
 from app.exceptions import DevFlowFixException
 
 logger = structlog.get_logger()
+
+
+def _extract_first_forwarded_ip(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    first = value.split(",", 1)[0].strip()
+    if not first:
+        return None
+
+    try:
+        ipaddress.ip_address(first)
+    except ValueError:
+        return None
+
+    return first
+
+
+def _is_private_or_loopback_ip(value: str | None) -> bool:
+    if not value:
+        return False
+
+    try:
+        ip_obj = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+
+    return ip_obj.is_private or ip_obj.is_loopback
+
+
+def resolve_client_ip(request: Request) -> str:
+    """
+    Resolve the most useful client IP for proxy deployments.
+
+    When the immediate peer is a local/private proxy (for example nginx behind
+    SafeLine), prefer trusted forwarding headers from that proxy. Otherwise use
+    the direct peer address.
+    """
+    direct_ip = request.client.host if request.client else "unknown"
+
+    if not _is_private_or_loopback_ip(direct_ip):
+        return direct_ip
+
+    for header_name in ("cf-connecting-ip", "x-real-ip"):
+        candidate = request.headers.get(header_name)
+        if _extract_first_forwarded_ip(candidate):
+            return _extract_first_forwarded_ip(candidate)  # type: ignore[return-value]
+
+    forwarded_for = _extract_first_forwarded_ip(request.headers.get("x-forwarded-for"))
+    if forwarded_for:
+        return forwarded_for
+
+    return direct_ip
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
@@ -74,7 +128,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "method": request.method,
             "path": request.url.path,
             "query_params": dict(request.query_params),
-            "client_ip": request.client.host if request.client else None,
+            "client_ip": resolve_client_ip(request),
+            "direct_client_ip": request.client.host if request.client else None,
+            "cf_connecting_ip": request.headers.get("CF-Connecting-IP"),
+            "x_forwarded_for": request.headers.get("X-Forwarded-For"),
             "user_agent": request.headers.get("User-Agent"),
         }
         
@@ -295,7 +352,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """Get client identifier from request."""
         # In production, use authenticated user ID
         # For now, use IP address
-        return request.client.host if request.client else "unknown"
+        return resolve_client_ip(request)
     
     def _is_rate_limited(self, client_id: str) -> bool:
         """Check if client has exceeded rate limit."""

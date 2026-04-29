@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from dataclasses import dataclass
 import hmac
-import hashlib
+import base64
 import time
 import json
 import httpx
@@ -60,13 +60,10 @@ class EmailService:
 
         Signature is computed as: HMAC-SHA256("{timestamp}:{method}:{path}:{body}", secret)
         """
-        message = f"{timestamp}:{method}:{path}:{body}"
-        signature = hmac.new(
-            self.secret.encode(),
-            message.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        return signature
+        canonical_message = f"{timestamp}:{method}:{path}:{body}".encode("utf-8")
+        signing_key = self.secret.encode("utf-8")
+        signature_bytes = hmac.digest(signing_key, canonical_message, "sha256")
+        return base64.b16encode(signature_bytes).decode("ascii").lower()
 
     def _get_auth_headers(self, path: str, body: str) -> dict:
         """Generate authentication headers for email service request."""
