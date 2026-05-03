@@ -24,8 +24,9 @@ from app.middleware import (
     SecurityHeadersMiddleware,
     BrotliOrGzipMiddleware,
 )
-from app.dependencies import get_engine, get_db, get_event_processor
+from app.dependencies import get_engine, get_db, get_event_processor, get_service_container
 from app.api import router as api_router
+from app.services.webhook_queue import get_webhook_queue_service
 
 structlog.configure(
     processors=[
@@ -68,10 +69,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("database_not_configured_starting_in_stateless_mode")
 
+    await get_webhook_queue_service().start()
+
     yield
 
     # Cleanup: Close persistent HTTP client
     from app.auth.zitadel import close_http_client
+    from app.adapters.cache.redis import close_redis_cache
+
+    await get_webhook_queue_service().stop()
+    await get_service_container().close()
+    await close_redis_cache()
     await close_http_client()
 
     logger.info("application_shutdown")

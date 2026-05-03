@@ -31,13 +31,23 @@ services:
     ports:
       - "8001:8000"
       - "5678:5678"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    env_file:
+      - ./dev.env
     environment:
       ENVIRONMENT: dev
       PYTHONPATH: /app
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/vector_db
       REDIS_URL: redis://redis:6379/0
       REDIS_PASSWORD: ""
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      NVIDIA_API_BASE_URL: https://integrate.api.nvidia.com/v1
+      NVIDIA_LLM_MODEL: qwen/qwen3-coder-480b-a35b-instruct
+      NVIDIA_EMBEDDING_MODEL: nvidia/nv-embedcode-7b-v1
+      NVIDIA_API_TIMEOUT: "300"
+      NVIDIA_MAX_RETRIES: "3"
+      GITHUB_API_BASE_URL: https://api.github.com
       PYTHONOPTIMIZE: "0"
     depends_on:
       migrate:
@@ -59,9 +69,8 @@ services:
     depends_on:
       python:
         condition: service_started
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
-      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
+    env_file:
+      - ./dev.env
     ports:
       - "4040:4040"
     volumes:

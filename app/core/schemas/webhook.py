@@ -19,6 +19,8 @@ class WebhookResponse(BaseModel):
     incident_id: str = Field(..., description="Created incident ID.")
     acknowledged: bool = Field(True, description="Whether webhook was acknowledged")
     queued: bool = Field(False, description="Whether event was queued for processing")
+    job_id: Optional[str] = Field(None, description="Background job ID when queued")
+    job_status_url: Optional[str] = Field(None, description="URL to inspect queued job status")
     message: Optional[str] = Field(None, description="Response message")
 
 class GitHubWebhookPayload(BaseModel):

@@ -85,6 +85,7 @@ class GitHubClient:
         self.max_retries = max_retries
         self.enable_cache = enable_cache
         self.cache: Optional[RedisCache] = None
+        self.base_url = self.settings.github_api_base_url.rstrip("/") or self.BASE_URL
 
         if enable_cache:
             self.cache = get_redis_cache()
@@ -93,7 +94,7 @@ class GitHubClient:
             logger.warning("github_client_no_token", message="GitHub token not configured")
 
         self.client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
+            base_url=self.base_url,
             timeout=timeout,
             headers=self._get_default_headers(),
             follow_redirects=True,

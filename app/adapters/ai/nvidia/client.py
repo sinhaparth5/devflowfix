@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
+import asyncio
 from typing import Optional, Dict, Any, List
 import httpx
 import structlog
@@ -8,6 +9,7 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
+    retry_if_exception,
     retry_if_exception_type,
 )
 
@@ -18,6 +20,10 @@ logger = structlog.get_logger(__name__)
 
 OPENAI_COMPATIBLE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 LEGACY_PEXEC_BASE_URL = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions"
+
+
+def _is_retryable_nvidia_error(exc: BaseException) -> bool:
+    return isinstance(exc, NVIDIAAPIError) and exc.status_code in {429, 500, 502, 503, 504}
 
 class NVIDIAClient:
     """
@@ -48,11 +54,8 @@ class NVIDIAClient:
         if not self.api_key:
             raise ValueError("NVIDIA API key is required")
         
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=httpx.Timeout(self.timeout),
-            headers=self._get_headers(),
-        )
+        self._client: Optional[httpx.AsyncClient] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
 
         logger.info(
             "nvidia_client_initialized",
@@ -60,6 +63,59 @@ class NVIDIAClient:
             timeout=self.timeout,
             max_retries=self.max_retries,
         )
+
+    _request_semaphore: Optional[asyncio.Semaphore] = None
+    _request_semaphore_limit: Optional[int] = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        return self._get_client()
+
+    @client.setter
+    def client(self, value: httpx.AsyncClient) -> None:
+        self._client = value
+        self._client_loop = self._current_loop()
+
+    def _current_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
+    def _create_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout),
+            headers=self._get_headers(),
+        )
+
+    def _get_request_semaphore(self) -> asyncio.Semaphore:
+        limit = settings.nvidia_max_concurrency
+        if (
+            self.__class__._request_semaphore is None
+            or self.__class__._request_semaphore_limit != limit
+        ):
+            self.__class__._request_semaphore = asyncio.Semaphore(limit)
+            self.__class__._request_semaphore_limit = limit
+        return self.__class__._request_semaphore
+
+    def _get_client(self) -> httpx.AsyncClient:
+        loop = self._current_loop()
+        loop_changed = (
+            loop is not None
+            and self._client_loop is not None
+            and self._client_loop is not loop
+        )
+
+        if self._client is None or self._client.is_closed or loop_changed:
+            if loop_changed:
+                logger.warning("nvidia_client_recreated_for_event_loop")
+            self._client = self._create_client()
+            self._client_loop = loop
+        elif self._client_loop is None and loop is not None:
+            self._client_loop = loop
+
+        return self._client
 
     def _normalize_base_url(self, base_url: Optional[str]) -> str:
         """
@@ -96,7 +152,10 @@ class NVIDIAClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        retry=(
+            retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError))
+            | retry_if_exception(_is_retryable_nvidia_error)
+        ),
         reraise=True,
     )
     async def post(
@@ -129,7 +188,8 @@ class NVIDIAClient:
             payload_size=len(str(data)),
         )
         try:
-            response = await self.client.post(url, json=data)
+            async with self._get_request_semaphore():
+                response = await self._get_client().post(url, json=data)
 
             logger.debug(
                 "nvidia_api_response",
@@ -152,6 +212,8 @@ class NVIDIAClient:
                 )
             
             return response.json()
+        except NVIDIAAPIError:
+            raise
         except httpx.TimeoutException as e:
             logger.error("nvidia_api_timeout", url=url, timeout=self.timeout)
             raise NVIDIAAPIError(f"Request timed out after {self.timeout}s", status_code=504)
@@ -179,7 +241,7 @@ class NVIDIAClient:
         url = self._build_url(endpoint=endpoint)
 
         try:
-            response = await self.client.get(url)
+            response = await self._get_client().get(url)
 
             if response.status_code >= 400:
                 error_detail = self._extract_error_detail(response)
@@ -237,7 +299,15 @@ class NVIDIAClient:
         
     async def close(self):
         """ Close the HTTP client """
-        await self.client.aclose()
+        if self._client and not self._client.is_closed:
+            try:
+                await self._client.aclose()
+            except RuntimeError as e:
+                if "Event loop is closed" not in str(e):
+                    raise
+                logger.warning("nvidia_client_close_skipped_closed_loop")
+        self._client = None
+        self._client_loop = None
         logger.debug("nvidia_client_closed")
 
     async def __aenter__(self):

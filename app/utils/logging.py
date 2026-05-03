@@ -2,8 +2,9 @@
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
 import logging
+import os
 import sys
-from typing import Optional, Any
+from typing import Optional
 
 
 class StructuredLogger:
@@ -44,6 +45,22 @@ class StructuredLogger:
         self._logger.critical(self._format_message(msg, **kwargs))
 
 
+_LOG_LEVELS = {
+    "CRITICAL": logging.CRITICAL,
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "WARN": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+}
+
+
+def _get_configured_level() -> int:
+    """Resolve log level from environment, defaulting to INFO."""
+    raw_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    return _LOG_LEVELS.get(raw_level, logging.INFO)
+
+
 def get_logger(name: str, level: Optional[int] = None) -> StructuredLogger:
     """
     Get a configured structured logger instance.
@@ -56,18 +73,20 @@ def get_logger(name: str, level: Optional[int] = None) -> StructuredLogger:
         Configured structured logger instance
     """
     logger = logging.getLogger(name)
-    
+
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%dT%H:%M:%S%z',
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-    
+        logger.propagate = False
+
     if level is not None:
         logger.setLevel(level)
-    elif not logger.level:
-        logger.setLevel(logging.WARNING)  # Reduce noise for tests
-    
+    else:
+        logger.setLevel(_get_configured_level())
+
     return StructuredLogger(logger)

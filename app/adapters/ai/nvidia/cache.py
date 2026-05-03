@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent the detects, analyzes, and resolves CI/CD failures in real-time.
 
+import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone, timedelta
 import pickle
@@ -147,6 +148,7 @@ class RedisEmbeddingCache(EmbeddingCache):
         self.key_prefix = key_prefix
         self.default_ttl = default_ttl
         self.redis_client = None
+        self._redis_loop: Optional[asyncio.AbstractEventLoop] = None
         
         if not self.redis_url:
             raise ValueError("Redis URL is required for Redis cache")
@@ -167,15 +169,33 @@ class RedisEmbeddingCache(EmbeddingCache):
             key_prefix=key_prefix,
             default_ttl=default_ttl,
         )
+
+    def _current_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
     
     async def _get_client(self):
         """Get or create Redis client."""
-        if self.redis_client is None:
+        loop = self._current_loop()
+        loop_changed = (
+            loop is not None
+            and self._redis_loop is not None
+            and self._redis_loop is not loop
+        )
+
+        if self.redis_client is None or loop_changed:
+            if loop_changed:
+                logger.warning("redis_cache_recreated_for_event_loop")
             self.redis_client = self.redis.from_url(
                 self.redis_url,
                 encoding="utf-8",
                 decode_responses=False,  # We need bytes for pickle
             )
+            self._redis_loop = loop
+        elif self._redis_loop is None and loop is not None:
+            self._redis_loop = loop
         return self.redis_client
     
     async def get(self, key: str) -> Optional[List[float]]:
@@ -239,7 +259,14 @@ class RedisEmbeddingCache(EmbeddingCache):
     async def close(self) -> None:
         """Close Redis connection."""
         if self.redis_client:
-            await self.redis_client.close()
+            try:
+                await self.redis_client.close()
+            except RuntimeError as e:
+                if "Event loop is closed" not in str(e):
+                    raise
+                logger.warning("redis_cache_close_skipped_closed_loop")
+            self.redis_client = None
+            self._redis_loop = None
             logger.debug("redis_cache_closed")
 
 
