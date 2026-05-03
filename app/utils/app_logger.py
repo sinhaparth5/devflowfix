@@ -60,6 +60,14 @@ class AppLogger:
     ) -> ApplicationLogTable:
         """Internal method to create and save a log entry."""
         try:
+            self._emit_console_log(
+                level=level,
+                category=category,
+                message=message,
+                stage=stage,
+                details=details,
+                error=error,
+            )
             log = ApplicationLogTable(
                 log_id=f"log_{uuid4().hex[:12]}",
                 incident_id=self.incident_id,
@@ -83,6 +91,38 @@ class AppLogger:
             logger.error("failed_to_create_application_log", error=str(e), message=message)
             # Don't raise - logging failure shouldn't break the main workflow
             return None
+
+    def _emit_console_log(
+        self,
+        level: LogLevel,
+        category: LogCategory,
+        message: str,
+        stage: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Mirror workflow logs to CLI so DB and terminal show the same progress."""
+        log_method = {
+            LogLevel.DEBUG: logger.debug,
+            LogLevel.INFO: logger.info,
+            LogLevel.WARNING: logger.warning,
+            LogLevel.ERROR: logger.error,
+            LogLevel.CRITICAL: logger.critical,
+        }.get(level, logger.info)
+
+        payload = {
+            "incident_id": self.incident_id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "category": category.value,
+            "stage": stage,
+        }
+        if details:
+            payload["details"] = details
+        if error:
+            payload["error"] = error
+
+        log_method(message, **payload)
 
     # Webhook logs
 

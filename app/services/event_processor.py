@@ -27,6 +27,8 @@ from app.adapters.database.postgres.repositories.vector import VectorRepository
 from app.adapters.database.postgres.models import IncidentTable
 from app.adapters.external.slack.notifications import SlackNotificationAdapter
 from app.adapters.ai.nvidia import EmbeddingAdapter
+from app.adapters.database.postgres.models import LogCategory
+from app.utils.app_logger import AppLogger
 
 logger = structlog.get_logger(__name__)
 
@@ -95,6 +97,54 @@ class EventProcessor:
             auto_remediation=enable_auto_remediation,
             auto_pr_enabled=enable_auto_pr,
         )
+
+    def _get_app_logger(self, incident: Optional[Incident]) -> Optional[AppLogger]:
+        if not incident or not hasattr(self.incident_repo, "db") or self.incident_repo.db is None:
+            return None
+        return AppLogger(
+            db=self.incident_repo.db,
+            incident_id=incident.incident_id,
+            user_id=incident.context.get("user_id"),
+        )
+
+    def _workflow_log(
+        self,
+        incident: Optional[Incident],
+        level: str,
+        category: LogCategory,
+        message: str,
+        stage: str,
+        details: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        app_logger = self._get_app_logger(incident)
+        if app_logger:
+            if level == "debug":
+                app_logger.debug(message, category=category, stage=stage, details=details)
+            elif level == "warning":
+                app_logger.warning(message, category=category, stage=stage, details=details)
+            elif level == "error":
+                app_logger.error(message, category=category, stage=stage, details=details)
+            else:
+                app_logger.info(message, category=category, stage=stage, details=details)
+            return
+
+        fallback = {
+            "debug": logger.debug,
+            "info": logger.info,
+            "warning": logger.warning,
+            "error": logger.error,
+        }.get(level, logger.info)
+        payload: Dict[str, Any] = {
+            "incident_id": incident.incident_id if incident else None,
+            "category": category.value,
+            "stage": stage,
+        }
+        if details:
+            payload["details"] = details
+        if error:
+            payload["error"] = error
+        fallback(message, **payload)
     
     async def process(
         self,
@@ -286,17 +336,29 @@ class EventProcessor:
         
         self.incident_repo.create(incident_table)
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.WEBHOOK,
+            "Incident created",
             "incident_created",
-            incident_id=incident.incident_id,
-            source=source.value,
-            severity=incident.severity.value,
+            details={
+                "source": source.value,
+                "severity": incident.severity.value,
+            },
         )
         
         return incident
     
     async def _generate_and_store_embedding(self, incident: Incident):
         if not self.embedding_adapter:
+            self._workflow_log(
+                incident,
+                "warning",
+                LogCategory.ANALYSIS,
+                "Embedding generation skipped because no embedding adapter is configured",
+                "embedding_skipped",
+            )
             return
         
         try:
@@ -307,16 +369,22 @@ class EventProcessor:
             
             self.vector_repo.store_embedding(incident.incident_id, embedding)
             
-            logger.debug(
+            self._workflow_log(
+                incident,
+                "debug",
+                LogCategory.ANALYSIS,
+                "Incident embedding stored",
                 "embedding_stored",
-                incident_id=incident.incident_id,
             )
         except Exception as e:
-            logger.warning(
+            self._workflow_log(
+                incident,
+                "warning",
+                LogCategory.ANALYSIS,
+                "Embedding generation failed",
                 "embedding_generation_failed",
-                incident_id=incident.incident_id,
+                details={"error_type": type(e).__name__},
                 error=str(e) or repr(e),
-                error_type=type(e).__name__,
             )
     
     async def _retrieve_similar(self, incident: Incident) -> list:
@@ -349,10 +417,13 @@ class EventProcessor:
                     )
                     continue
             
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.ANALYSIS,
+                "Similar incidents retrieved",
                 "similar_incidents_retrieved",
-                incident_id=incident.incident_id,
-                count=len(result),
+                details={"count": len(result)},
             )
             
             return result
@@ -384,12 +455,17 @@ class EventProcessor:
             similar_incidents=similar_incidents if similar_incidents else [],
         )
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.ANALYSIS,
+            "Analysis complete",
             "analysis_complete",
-            incident_id=incident.incident_id,
-            category=analysis.category.value,
-            confidence=analysis.confidence,
-            fixability=analysis.fixability.value,
+            details={
+                "category": analysis.category.value,
+                "confidence": analysis.confidence,
+                "fixability": analysis.fixability.value,
+            },
         )
         
         return analysis
@@ -408,9 +484,12 @@ class EventProcessor:
         try:
             # Check if we have an LLM client available
             if not self.analyzer or not self.analyzer.llm:
-                logger.warning(
+                self._workflow_log(
+                    incident,
+                    "warning",
+                    LogCategory.LLM,
+                    "Solution generation skipped because no LLM client is available",
                     "solution_generation_skipped_no_llm",
-                    incident_id=incident.incident_id,
                 )
                 await self._record_post_analysis_state(
                     incident,
@@ -419,10 +498,15 @@ class EventProcessor:
                 )
                 return None
             
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.LLM,
+                "Solution generation started",
                 "solution_generation_start",
-                incident_id=incident.incident_id,
-                failure_type=analysis.category.value if analysis.category else "unknown",
+                details={
+                    "failure_type": analysis.category.value if analysis.category else "unknown",
+                },
             )
             
             # Try to extract structured error information from logs for better context
@@ -493,10 +577,13 @@ class EventProcessor:
             )
 
             # Log solutions to terminal
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.LLM,
+                "Solution generated",
                 "solution_generated",
-                incident_id=incident.incident_id,
-                failure_type=analysis.category.value,
+                details={"failure_type": analysis.category.value},
             )
             
             # Log immediate fix details
@@ -560,24 +647,32 @@ class EventProcessor:
                         title=resource.get("title", ""),
                     )
             
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.LLM,
+                "Solution generation complete",
                 "solution_generation_complete",
-                incident_id=incident.incident_id,
-                failure_type=analysis.category.value,
-                has_code_changes=bool(solution.get("code_changes")),
-                has_config_changes=bool(solution.get("configuration_changes")),
+                details={
+                    "failure_type": analysis.category.value,
+                    "has_code_changes": bool(solution.get("code_changes")),
+                    "has_config_changes": bool(solution.get("configuration_changes")),
+                },
             )
 
             await self._attempt_post_analysis_pr(incident, analysis, solution)
             return solution
             
         except Exception as e:
-            logger.error(
+            self._workflow_log(
+                incident,
+                "error",
+                LogCategory.LLM,
+                "Solution generation failed",
                 "solution_generation_failed",
-                incident_id=incident.incident_id,
                 error=str(e),
-                exc_info=True,
             )
+            logger.error("solution_generation_failed", incident_id=incident.incident_id, error=str(e), exc_info=True)
             await self._record_post_analysis_state(
                 incident,
                 status="failed",
@@ -722,7 +817,14 @@ class EventProcessor:
                 status="skipped",
                 reason=reason,
             )
-            logger.info("auto_pr_skipped", incident_id=incident.incident_id, reason=reason)
+            self._workflow_log(
+                incident,
+                "warning",
+                LogCategory.GITHUB,
+                "Automated PR skipped",
+                "auto_pr_skipped",
+                details={"reason": reason},
+            )
             return None
 
         if not self.enable_auto_pr:
@@ -731,21 +833,32 @@ class EventProcessor:
                 status="skipped",
                 reason="auto_pr_disabled",
             )
-            logger.info("auto_pr_skipped_disabled", incident_id=incident.incident_id)
+            self._workflow_log(
+                incident,
+                "warning",
+                LogCategory.GITHUB,
+                "Automated PR skipped because auto PR is disabled",
+                "auto_pr_skipped_disabled",
+            )
             return None
 
         should_create = self._should_create_pr(analysis, incident, solution)
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.GITHUB,
+            "Evaluated PR creation decision",
             "pr_creation_decision",
-            incident_id=incident.incident_id,
-            enable_auto_pr=self.enable_auto_pr,
-            has_code_changes=bool(solution.get("code_changes")),
-            has_config_changes=bool(solution.get("configuration_changes")),
-            should_create_pr=should_create,
-            confidence=analysis.confidence,
-            fixability=str(analysis.fixability),
-            has_repository=bool(incident.context.get("repository")),
-            provider=incident.source.value,
+            details={
+                "enable_auto_pr": self.enable_auto_pr,
+                "has_code_changes": bool(solution.get("code_changes")),
+                "has_config_changes": bool(solution.get("configuration_changes")),
+                "should_create_pr": should_create,
+                "confidence": analysis.confidence,
+                "fixability": str(analysis.fixability),
+                "has_repository": bool(incident.context.get("repository")),
+                "provider": incident.source.value,
+            },
         )
 
         if not should_create:
@@ -757,10 +870,13 @@ class EventProcessor:
             return None
 
         try:
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.GITHUB,
+                "Automated PR creation started",
                 "auto_pr_creation_start",
-                incident_id=incident.incident_id,
-                failure_type=analysis.category.value,
+                details={"failure_type": analysis.category.value},
             )
 
             user_id = incident.context.get("user_id")
@@ -771,11 +887,16 @@ class EventProcessor:
                 user_id=user_id,
             )
 
-            logger.info(
+            self._workflow_log(
+                incident,
+                "info",
+                LogCategory.GITHUB,
+                "Automated PR created successfully",
                 "auto_pr_create_success",
-                incident_id=incident.incident_id,
-                pr_number=pr_result.get("number"),
-                pr_url=pr_result.get("html_url"),
+                details={
+                    "pr_number": pr_result.get("number"),
+                    "pr_url": pr_result.get("html_url"),
+                },
             )
 
             incident.context["automated_pr"] = {
@@ -792,12 +913,15 @@ class EventProcessor:
             )
             return pr_result
         except Exception as pr_error:
-            logger.error(
+            self._workflow_log(
+                incident,
+                "error",
+                LogCategory.GITHUB,
+                "Automated PR creation failed",
                 "auto_pr_creation_failed",
-                incident_id=incident.incident_id,
                 error=str(pr_error),
-                exc_info=True,
             )
+            logger.error("auto_pr_creation_failed", incident_id=incident.incident_id, error=str(pr_error), exc_info=True)
             await self._record_post_analysis_state(
                 incident,
                 status="failed",
@@ -911,6 +1035,26 @@ class EventProcessor:
 
         incident.context["post_analysis"] = state
         self._persist_incident_context(incident)
+
+        level = "info"
+        if status == "failed":
+            level = "error"
+        elif status == "skipped":
+            level = "warning"
+
+        details: Dict[str, Any] = {"status": status, "reason": reason}
+        if extra:
+            details.update(extra)
+
+        self._workflow_log(
+            incident,
+            level,
+            LogCategory.GITHUB,
+            "Post-analysis PR state updated",
+            "post_analysis_state_updated",
+            details=details,
+            error=reason if status == "failed" else None,
+        )
     
     async def _create_fix_pr(
             self,
@@ -995,12 +1139,18 @@ class EventProcessor:
             similar_incidents=similar_incidents,
         )
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.ANALYSIS,
+            "Decision computed",
             "decision_made",
-            incident_id=incident.incident_id,
-            should_auto_fix=decision.should_auto_fix,
-            confidence=decision.confidence,
-            requires_approval=decision.requires_approval,
+            details={
+                "should_auto_fix": decision.should_auto_fix,
+                "confidence": decision.confidence,
+                "requires_approval": decision.requires_approval,
+                "reason": decision.reason,
+            },
         )
         
         return decision
@@ -1055,11 +1205,16 @@ class EventProcessor:
         
         self._persist_incident_state(incident)
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.REMEDIATION,
+            "Incident finalized",
             "incident_finalized",
-            incident_id=incident.incident_id,
-            outcome=incident.outcome.value,
-            resolution_time=incident.resolution_time_seconds,
+            details={
+                "outcome": incident.outcome.value,
+                "resolution_time": incident.resolution_time_seconds,
+            },
         )
     
     async def _handle_no_auto_fix(
@@ -1078,6 +1233,17 @@ class EventProcessor:
             outcome = Outcome.PENDING
         
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+        self._workflow_log(
+            incident,
+            "warning",
+            LogCategory.ANALYSIS,
+            "Auto remediation not executed",
+            "auto_fix_not_executed",
+            details={
+                "reason": decision.reason,
+                "escalated": decision.escalate,
+            },
+        )
         
         return ProcessingResult(
             incident_id=incident.incident_id,
@@ -1129,10 +1295,13 @@ class EventProcessor:
                 decision=decision,
             )
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "info",
+            LogCategory.REMEDIATION,
+            "Approval requested",
             "approval_requested",
-            incident_id=incident.incident_id,
-            confidence=decision.confidence,
+            details={"confidence": decision.confidence},
         )
     
     async def _escalate(
@@ -1150,10 +1319,13 @@ class EventProcessor:
                 decision=decision,
             )
         
-        logger.info(
+        self._workflow_log(
+            incident,
+            "warning",
+            LogCategory.REMEDIATION,
+            "Incident escalated",
             "incident_escalated",
-            incident_id=incident.incident_id,
-            reason=decision.reason,
+            details={"reason": decision.reason},
         )
     
     async def _handle_failure(self, incident: Incident, error: str):
@@ -1174,6 +1346,14 @@ class EventProcessor:
                 incident,
                 error=error,
             )
+        self._workflow_log(
+            incident,
+            "error",
+            LogCategory.SYSTEM,
+            "Incident processing failed",
+            "incident_failed",
+            error=error,
+        )
     
     async def _notify(
         self,
