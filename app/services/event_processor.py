@@ -128,6 +128,13 @@ class EventProcessor:
             similar_incidents = await self._retrieve_similar(incident)
             
             analysis = await self._analyze(incident, similar_incidents)
+
+            # Confidence-driven rules read from the incident object, not just analysis.
+            incident.failure_type = analysis.category
+            incident.root_cause = analysis.root_cause
+            incident.fixability = analysis.fixability
+            incident.confidence = analysis.confidence
+            incident.similar_incidents = analysis.similar_incidents or []
             
             await self._update_incident_analysis(incident, analysis)
             
@@ -349,7 +356,13 @@ class EventProcessor:
             )
             
             return result
-            
+        except ValueError as e:
+            logger.warning(
+                "similar_retrieval_skipped",
+                incident_id=incident.incident_id if incident else None,
+                error=str(e),
+            )
+            return []
         except Exception as e:
             logger.exception(
                 "similar_retrieval_failed",
@@ -363,6 +376,8 @@ class EventProcessor:
         incident: Incident,
         similar_incidents: list,
     ) -> AnalysisResult:
+        if self.analyzer is None:
+            raise RuntimeError("Analyzer service is not configured")
         
         analysis = await self.analyzer.analyze(
             incident=incident,
@@ -700,14 +715,6 @@ class EventProcessor:
         analysis: AnalysisResult,
         solution: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        if not solution.get("code_changes"):
-            await self._record_post_analysis_state(
-                incident,
-                status="skipped",
-                reason="no_code_changes",
-            )
-            return None
-
         supported, reason = self._supports_automated_pr(incident)
         if not supported:
             await self._record_post_analysis_state(
@@ -733,6 +740,7 @@ class EventProcessor:
             incident_id=incident.incident_id,
             enable_auto_pr=self.enable_auto_pr,
             has_code_changes=bool(solution.get("code_changes")),
+            has_config_changes=bool(solution.get("configuration_changes")),
             should_create_pr=should_create,
             confidence=analysis.confidence,
             fixability=str(analysis.fixability),
@@ -826,6 +834,7 @@ class EventProcessor:
             has_repository=bool(incident.context.get("repository")),
             repository=incident.context.get("repository"),
             has_code_changes=bool(solution and solution.get("code_changes")),
+            has_config_changes=bool(solution and solution.get("configuration_changes")),
         )
         
         if analysis.confidence < min_confidence:
@@ -853,12 +862,14 @@ class EventProcessor:
             )
             return False
 
-        if solution is not None and not solution.get("code_changes"):
+        has_code_changes = bool(solution and solution.get("code_changes"))
+        has_config_changes = bool(solution and solution.get("configuration_changes"))
+        if solution is not None and not has_code_changes and not has_config_changes:
             logger.info(
-                "pr_creation_skipped_no_code_changes",
+                "pr_creation_report_only",
                 incident_id=incident.incident_id,
             )
-            return False
+            return True
         
         logger.info(
             "pr_creation_criteria_met",

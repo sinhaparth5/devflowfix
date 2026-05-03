@@ -159,16 +159,16 @@ class ServiceContainer:
     
     def get_analyzer_service(self, db: Optional[Session] = None):
         if self._analyzer_service is None:
-            if self.llm_adapter:
-                from app.services.analyzer import AnalyzerService
-                self._analyzer_service = AnalyzerService(
-                    settings=settings,
-                    llm_client=self.llm_adapter,
-                    embedder_service=self.embedding_adapter,
-                    retriever_service=self.get_retriever_service(db),
-                )
-            else:
-                logger.warning("analyzer_service_not_available_no_llm")
+            from app.services.analyzer import AnalyzerService
+            llm_adapter = self.llm_adapter
+            if llm_adapter is None:
+                logger.warning("analyzer_service_initialized_without_llm")
+            self._analyzer_service = AnalyzerService(
+                settings=settings,
+                llm_client=llm_adapter,
+                embedder_service=self.embedding_adapter,
+                retriever_service=self.get_retriever_service(db),
+            )
         return self._analyzer_service
     
     def get_decision_service(self):

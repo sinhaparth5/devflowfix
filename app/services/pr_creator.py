@@ -187,12 +187,23 @@ class PRCreatorService:
                 config_changes=solution.get("configuration_changes", []),
             )
 
+            report_files = await self._apply_analysis_report(
+                github_client=github_client,
+                owner=owner,
+                repo=repo,
+                branch=branch_name,
+                incident=incident,
+                analysis=analysis,
+                solution=solution,
+                existing_changed_files=changed_files + config_files,
+            )
+
             pr_title = self._generate_pr_title(analysis)
             pr_body = self._generate_pr_body(
                 incident=incident,
                 analysis=analysis,
                 solution=solution,
-                changed_files=changed_files + config_files,
+                changed_files=changed_files + config_files + report_files,
             )
 
             logger.info(
@@ -237,7 +248,7 @@ class PRCreatorService:
                     title=pr_title,
                     description=pr_body,
                     status=PRStatus.CREATED,
-                    files_changed=len(changed_files + config_files),
+                    files_changed=len(changed_files + config_files + report_files),
                     failure_type=analysis.category.value if analysis.category else "unknown",
                     root_cause=analysis.root_cause,
                     confidence_score=analysis.confidence,
@@ -259,7 +270,7 @@ class PRCreatorService:
                     branch_name=branch_name,
                     failure_type=analysis.category.value if analysis.category else "unknown",
                     root_cause=analysis.root_cause,
-                    files_to_change=len(changed_files + config_files),
+                    files_to_change=len(changed_files + config_files + report_files),
                     status="success",
                     duration_ms=int(
                         (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
@@ -279,7 +290,7 @@ class PRCreatorService:
                 pr_id=pr_id,
                 pr_number=pr_result["number"],
                 pr_url=pr_result["html_url"],
-                files_changed=len(changed_files + config_files),
+                files_changed=len(changed_files + config_files + report_files),
             )
 
             # Log PR created successfully
@@ -299,7 +310,7 @@ class PRCreatorService:
             return {
                 **pr_result,
                 "pr_id": pr_id,
-                "files_changed": changed_files + config_files,
+                "files_changed": changed_files + config_files + report_files,
                 "timestamp": start_time.isoformat(),
             }
             
@@ -628,6 +639,53 @@ class PRCreatorService:
             changed_count=len(changed_files),
         )
         return changed_files
+
+    async def _apply_analysis_report(
+            self,
+            github_client: GitHubClient,
+            owner: str,
+            repo: str,
+            branch: str,
+            incident: Incident,
+            analysis: AnalysisResult,
+            solution: Dict[str, Any],
+            existing_changed_files: List[str],
+    ) -> List[str]:
+        """
+        Commit an analysis report when the model produced no concrete patch.
+
+        GitHub requires a diff between base and head, so an "analysis-only PR"
+        still needs one committed file.
+        """
+        if existing_changed_files:
+            return []
+
+        report_path = f".devflowfix/reports/{incident.incident_id}.md"
+        report_content = self._generate_analysis_report_content(
+            incident=incident,
+            analysis=analysis,
+            solution=solution,
+        )
+
+        await github_client.create_or_update_file(
+            owner=owner,
+            repo=repo,
+            path=report_path,
+            message=f"docs: add incident analysis report for {incident.incident_id}",
+            content=report_content,
+            branch=branch,
+            sha=None,
+        )
+
+        logger.info(
+            "analysis_report_created",
+            incident_id=incident.incident_id,
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            file=report_path,
+        )
+        return [report_path]
     
     async def _apply_config_changes(
             self,
@@ -732,6 +790,12 @@ class PRCreatorService:
             for file in changed_files:
                 body += f"- `{file}`\n"
             body += "\n"
+        else:
+            body += (
+                "**Modified Files:**\n"
+                "- No direct source/config patch was generated.\n"
+                "- This PR contains an analysis report for maintainer review.\n\n"
+            )
         
         # Immediate fix description
         if immediate_fix:
@@ -778,6 +842,95 @@ class PRCreatorService:
 """
         
         return body
+
+    def _generate_analysis_report_content(
+        self,
+        incident: Incident,
+        analysis: AnalysisResult,
+        solution: Dict[str, Any],
+    ) -> str:
+        """Generate markdown content for a report-only PR."""
+        immediate_fix = solution.get("immediate_fix") or {}
+        prevention = solution.get("prevention_measures") or []
+        resources = solution.get("resources") or []
+        reasoning = analysis.reasoning or "No detailed reasoning provided."
+        error_excerpt = (incident.error_log or incident.error_message or "").strip()
+        if len(error_excerpt) > 2000:
+            error_excerpt = error_excerpt[:2000] + "\n... [truncated]"
+
+        lines = [
+            "# DevFlowFix Incident Analysis Report",
+            "",
+            f"- Incident ID: `{incident.incident_id}`",
+            f"- Repository: `{incident.context.get('repository', 'unknown')}`",
+            f"- Branch: `{incident.context.get('branch', 'unknown')}`",
+            f"- Failure Type: `{analysis.category.value}`",
+            f"- Confidence: `{analysis.confidence:.0%}`",
+            "",
+            "## Root Cause",
+            "",
+            analysis.root_cause or "Unknown root cause.",
+            "",
+            "## Why This PR Has No Direct Patch",
+            "",
+            "The model did not return concrete `code_changes` or `configuration_changes`.",
+            "This report is committed so maintainers can review the diagnosis inside a PR workflow.",
+            "",
+            "## Suggested Immediate Fix",
+            "",
+            immediate_fix.get("description", "No immediate fix description provided."),
+            "",
+        ]
+
+        steps = immediate_fix.get("steps") or []
+        if steps:
+            lines.extend(["### Suggested Steps", ""])
+            lines.extend([f"{idx}. {step}" for idx, step in enumerate(steps, 1)])
+            lines.append("")
+
+        lines.extend([
+            "## Model Reasoning",
+            "",
+            reasoning,
+            "",
+        ])
+
+        if prevention:
+            lines.extend(["## Prevention Measures", ""])
+            for measure in prevention[:5]:
+                lines.append(
+                    f"- **{measure.get('measure', 'Prevention')}**: {measure.get('description', '')}"
+                )
+            lines.append("")
+
+        if resources:
+            lines.extend(["## Helpful Resources", ""])
+            for resource in resources[:5]:
+                title = resource.get("title", "Resource")
+                link = resource.get("url") or resource.get("link") or ""
+                lines.append(f"- [{title}]({link})" if link else f"- {title}")
+            lines.append("")
+
+        if error_excerpt:
+            lines.extend([
+                "## Error Excerpt",
+                "",
+                "```text",
+                error_excerpt,
+                "```",
+                "",
+            ])
+
+        lines.extend([
+            "## Maintainer Action",
+            "",
+            "- Review the diagnosis and suggested steps.",
+            "- Decide whether a manual patch, dependency update, config change, or rerun is appropriate.",
+            "- Update or close this PR after capturing the final fix.",
+            "",
+        ])
+
+        return "\n".join(lines)
     
     def should_create_pr(
         self,
