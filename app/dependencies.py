@@ -114,6 +114,10 @@ class ServiceContainer:
         self._decision_service = None
         self._remediator_service = None
         self._retriever_service = None
+        self._warned_missing_nvidia = False
+        self._warned_missing_slack = False
+        self._warned_missing_embedding_for_retriever = False
+        self._warned_analyzer_without_llm = False
     
     @classmethod
     def get_instance(cls) -> "ServiceContainer":
@@ -130,7 +134,9 @@ class ServiceContainer:
                     model=settings.nvidia_embedding_model
                 )
             else:
-                logger.warning("nvidia_api_key_not_configured")
+                if not self._warned_missing_nvidia:
+                    logger.warning("nvidia_api_key_not_configured")
+                    self._warned_missing_nvidia = True
         return self._embedding_adapter
     
     @property
@@ -142,7 +148,9 @@ class ServiceContainer:
                     model=settings.nvidia_llm_model
                 )
             else:
-                logger.warning("nvidia_api_key_not_configured")
+                if not self._warned_missing_nvidia:
+                    logger.warning("nvidia_api_key_not_configured")
+                    self._warned_missing_nvidia = True
         return self._llm_adapter
     
     @property
@@ -154,7 +162,9 @@ class ServiceContainer:
                     settings=settings
                 )
             else:
-                logger.warning("slack_token_not_configured")
+                if not self._warned_missing_slack:
+                    logger.warning("slack_token_not_configured")
+                    self._warned_missing_slack = True
         return self._notification_service
     
     def get_analyzer_service(self, db: Optional[Session] = None):
@@ -162,7 +172,9 @@ class ServiceContainer:
             from app.services.analyzer import AnalyzerService
             llm_adapter = self.llm_adapter
             if llm_adapter is None:
-                logger.warning("analyzer_service_initialized_without_llm")
+                if not self._warned_analyzer_without_llm:
+                    logger.warning("analyzer_service_initialized_without_llm")
+                    self._warned_analyzer_without_llm = True
             self._analyzer_service = AnalyzerService(
                 settings=settings,
                 llm_client=llm_adapter,
@@ -203,7 +215,9 @@ class ServiceContainer:
             RetrieverService with repository configured 
         """
         if not self.embedding_adapter:
-            logger.warning("retriever_service_not_available_no_embedding")
+            if not self._warned_missing_embedding_for_retriever:
+                logger.warning("retriever_service_not_available_no_embedding")
+                self._warned_missing_embedding_for_retriever = True
             return None
 
         from app.services.retriever import RetrieverService
@@ -244,6 +258,10 @@ class ServiceContainer:
         self._notification_service = None
         self._analyzer_service = None
         self._retriever_service = None
+        self._warned_missing_nvidia = False
+        self._warned_missing_slack = False
+        self._warned_missing_embedding_for_retriever = False
+        self._warned_analyzer_without_llm = False
 
 
 def get_service_container() -> ServiceContainer:

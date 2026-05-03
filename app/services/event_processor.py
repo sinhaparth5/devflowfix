@@ -28,6 +28,7 @@ from app.adapters.database.postgres.models import IncidentTable
 from app.adapters.external.slack.notifications import SlackNotificationAdapter
 from app.adapters.ai.nvidia import EmbeddingAdapter
 from app.adapters.database.postgres.models import LogCategory
+from app.exceptions import NVIDIAAPIError
 from app.utils.app_logger import AppLogger
 
 logger = structlog.get_logger(__name__)
@@ -664,6 +665,28 @@ class EventProcessor:
             return solution
             
         except Exception as e:
+            if isinstance(e, NVIDIAAPIError) and e.status_code == 429:
+                self._workflow_log(
+                    incident,
+                    "warning",
+                    LogCategory.LLM,
+                    "Solution generation deferred because the NVIDIA API rate limit was exceeded",
+                    "solution_generation_deferred_rate_limited",
+                    details={
+                        "failure_type": analysis.category.value if analysis.category else "unknown",
+                        "provider": "nvidia",
+                        "status_code": e.status_code,
+                    },
+                    error=str(e),
+                )
+                await self._record_post_analysis_state(
+                    incident,
+                    status="deferred",
+                    reason="nvidia_rate_limited",
+                    extra={"retryable": True, "provider": "nvidia"},
+                )
+                return None
+
             self._workflow_log(
                 incident,
                 "error",

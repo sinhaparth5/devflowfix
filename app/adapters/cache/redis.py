@@ -223,6 +223,36 @@ class RedisCache:
             logger.warning("redis_set_failed", key=key, error=str(e))
             return False
 
+    async def set_if_absent(
+        self,
+        key: str,
+        value: Any,
+        ttl: Optional[int] = None,
+    ) -> bool:
+        """
+        Set value only if the key does not already exist.
+
+        Returns:
+            True if the key was created, False if it already existed or on error.
+        """
+        if not self._connected_on_current_loop():
+            await self.connect()
+
+        try:
+            if isinstance(value, (dict, list)):
+                serialized = json.dumps(value)
+            else:
+                serialized = str(value)
+
+            ttl = ttl or settings.redis.ttl
+            result = await self.client.set(key, serialized, ex=ttl, nx=True)
+            created = bool(result)
+            logger.debug("redis_cache_set_if_absent", key=key, created=created, ttl=ttl)
+            return created
+        except (RedisError, TimeoutError) as e:
+            logger.warning("redis_set_if_absent_failed", key=key, error=str(e))
+            return False
+
     async def delete(self, key: str) -> bool:
         """
         Delete key from cache.

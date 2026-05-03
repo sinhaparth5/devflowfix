@@ -254,6 +254,8 @@ class BlastRadiusExceededError(DevFlowFixException):
 class ExternalServiceError(DevFlowFixException):
     """Base exception for external service errors."""
     def __init__(self, service: str, message: str, status_code: Optional[int] = None):
+        self.service = service
+        self.status_code = status_code
         super().__init__(
             message=f"{service} error: {message}",
             error_code=f"{service.lower()}_error",

@@ -42,10 +42,49 @@ def is_github_failure_event(event_type: str, payload: Dict[str, Any]) -> bool:
         return status_value == "completed" and conclusion in ["failure", "timed_out", "action_required"]
 
     if event_type == "check_run":
+        action = payload.get("action")
+        if action and action != "completed":
+            return False
         conclusion = payload.get("check_run", {}).get("conclusion")
         return conclusion in ["failure", "timed_out"]
 
     return False
+
+
+def build_github_dedup_key(
+    *,
+    user_id: str,
+    event_type: str,
+    delivery_id: str | None,
+    payload: Dict[str, Any],
+) -> str:
+    """Build a stable dedup key for GitHub webhook deliveries."""
+    if delivery_id:
+        return delivery_id
+
+    repository = payload.get("repository", {}).get("full_name", "unknown")
+    workflow_run = payload.get("workflow_run", {})
+    check_run = payload.get("check_run", {})
+    check_suite = payload.get("check_suite", {})
+
+    event_id = (
+        workflow_run.get("id")
+        or check_run.get("id")
+        or check_suite.get("id")
+        or payload.get("id")
+        or payload.get("after")
+        or payload.get("head_sha")
+        or "unknown"
+    )
+    action = payload.get("action") or workflow_run.get("status") or "unknown"
+    conclusion = (
+        workflow_run.get("conclusion")
+        or check_run.get("conclusion")
+        or check_suite.get("conclusion")
+        or "unknown"
+    )
+
+    return f"github:{user_id}:{repository}:{event_type}:{event_id}:{action}:{conclusion}"
 
 
 def is_argocd_failure_event(payload: Dict[str, Any]) -> bool:

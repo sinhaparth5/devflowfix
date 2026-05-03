@@ -605,6 +605,34 @@ class Settings(BaseSettings):
         ge=1,
         description="Redis socket timeout in seconds"
     )
+
+    webhook_queue_workers: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="Number of in-process webhook workers"
+    )
+
+    webhook_queue_max_size: int = Field(
+        default=100,
+        ge=10,
+        le=10000,
+        description="Maximum number of queued webhook jobs in memory"
+    )
+
+    webhook_dedup_ttl_seconds: int = Field(
+        default=900,
+        ge=30,
+        le=86400,
+        description="TTL for webhook deduplication keys in Redis"
+    )
+
+    nvidia_max_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="Maximum concurrent NVIDIA API requests per process"
+    )
     
     # Confidence thresholds
     min_confidence_threshold: float = Field(

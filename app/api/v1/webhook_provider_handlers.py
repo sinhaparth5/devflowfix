@@ -10,6 +10,7 @@ import structlog
 
 from app.adapters.database.postgres.models import LogCategory, RepositoryConnectionTable
 from app.api.v1.webhook_payloads import (
+    build_github_dedup_key,
     extract_argocd_payload,
     extract_github_payload,
     extract_kubernetes_payload,
@@ -23,9 +24,16 @@ from app.core.schemas.webhook import WebhookResponse
 from app.services.event_processor import EventProcessor
 from app.services.oauth.token_manager import get_token_manager
 from app.services.workflow.workflow_tracker import WorkflowTracker
+from app.services.webhook_queue import get_webhook_queue_service
 from app.utils.app_logger import AppLogger
 
 logger = structlog.get_logger(__name__)
+
+
+def _job_status_url(job_id: Optional[str]) -> Optional[str]:
+    if not job_id:
+        return None
+    return f"/api/v1/jobs/{job_id}"
 
 
 async def process_oauth_connected_workflow_event(
@@ -258,19 +266,40 @@ async def receive_github_webhook_impl(
             "future_incident_id": incident_id,
         },
     )
-    background_tasks.add_task(
-        process_webhook_sync,
-        event_processor,
-        normalized_payload,
-        IncidentSource.GITHUB,
-        incident_id,
-        user_id,
+    dedup_key = build_github_dedup_key(
+        user_id=user_id,
+        event_type=x_github_event,
+        delivery_id=x_github_delivery,
+        payload=payload,
     )
+    enqueue_result = await get_webhook_queue_service().enqueue(
+        payload=normalized_payload,
+        source=IncidentSource.GITHUB,
+        incident_id=incident_id,
+        user_id=user_id,
+        dedup_key=dedup_key,
+    )
+    if not enqueue_result.queued:
+        message = (
+            "Duplicate GitHub webhook ignored"
+            if enqueue_result.reason == "duplicate"
+            else "Webhook queue is full, try again later"
+        )
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            job_id=enqueue_result.job_id,
+            job_status_url=_job_status_url(enqueue_result.job_id),
+            message=message,
+        )
     logger.info("github_webhook_queued", incident_id=incident_id, event_type=x_github_event, user_id=user_id)
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
         queued=True,
+        job_id=enqueue_result.job_id,
+        job_status_url=_job_status_url(enqueue_result.job_id),
         message="GitHub failure detected, processing started",
     )
 
@@ -346,18 +375,28 @@ async def receive_argocd_webhook_impl(
     normalized_payload = extract_argocd_payload(payload)
     normalized_payload["raw_payload"] = payload
     normalized_payload.setdefault("context", {})["user_id"] = user_id
-    background_tasks.add_task(
-        process_webhook_sync,
-        event_processor,
-        normalized_payload,
-        IncidentSource.ARGOCD,
-        incident_id,
-        user_id,
+    enqueue_result = await get_webhook_queue_service().enqueue(
+        payload=normalized_payload,
+        source=IncidentSource.ARGOCD,
+        incident_id=incident_id,
+        user_id=user_id,
+        dedup_key=f"argocd:{user_id}:{app_name}:{payload.get('app', {}).get('status', {}).get('sync', {}).get('revision')}",
     )
+    if not enqueue_result.queued:
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            job_id=enqueue_result.job_id,
+            job_status_url=_job_status_url(enqueue_result.job_id),
+            message="Webhook queue is full or duplicate event ignored",
+        )
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
         queued=True,
+        job_id=enqueue_result.job_id,
+        job_status_url=_job_status_url(enqueue_result.job_id),
         message=f"ArgoCD failure detected for {app_name}, processing started",
     )
 
@@ -378,18 +417,27 @@ async def receive_kubernetes_webhook_impl(
     normalized_payload = extract_kubernetes_payload(payload)
     normalized_payload["raw_payload"] = payload
     normalized_payload.setdefault("context", {})["user_id"] = user_id
-    background_tasks.add_task(
-        process_webhook_sync,
-        event_processor,
-        normalized_payload,
-        IncidentSource.KUBERNETES,
-        incident_id,
-        user_id,
+    enqueue_result = await get_webhook_queue_service().enqueue(
+        payload=normalized_payload,
+        source=IncidentSource.KUBERNETES,
+        incident_id=incident_id,
+        user_id=user_id,
     )
+    if not enqueue_result.queued:
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            job_id=enqueue_result.job_id,
+            job_status_url=_job_status_url(enqueue_result.job_id),
+            message="Webhook queue is full or duplicate event ignored",
+        )
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
         queued=True,
+        job_id=enqueue_result.job_id,
+        job_status_url=_job_status_url(enqueue_result.job_id),
         message=f"Kubernetes failure detected ({reason}), processing started",
     )
 
@@ -463,17 +511,26 @@ async def receive_generic_webhook_impl(
     if not payload.get("error_log"):
         payload["error_log"] = payload.get("message", str(payload))
     payload.setdefault("context", {})["user_id"] = user_id
-    background_tasks.add_task(
-        process_webhook_sync,
-        event_processor,
-        payload,
-        source,
-        incident_id,
-        user_id,
+    enqueue_result = await get_webhook_queue_service().enqueue(
+        payload=payload,
+        source=source,
+        incident_id=incident_id,
+        user_id=user_id,
     )
+    if not enqueue_result.queued:
+        return WebhookResponse(
+            incident_id=incident_id,
+            acknowledged=True,
+            queued=False,
+            job_id=enqueue_result.job_id,
+            job_status_url=_job_status_url(enqueue_result.job_id),
+            message="Webhook queue is full or duplicate event ignored",
+        )
     return WebhookResponse(
         incident_id=incident_id,
         acknowledged=True,
         queued=True,
+        job_id=enqueue_result.job_id,
+        job_status_url=_job_status_url(enqueue_result.job_id),
         message="Generic webhook received, processing started",
     )

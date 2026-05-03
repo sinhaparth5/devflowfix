@@ -9,6 +9,7 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
+    retry_if_exception,
     retry_if_exception_type,
 )
 
@@ -19,6 +20,10 @@ logger = structlog.get_logger(__name__)
 
 OPENAI_COMPATIBLE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 LEGACY_PEXEC_BASE_URL = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions"
+
+
+def _is_retryable_nvidia_error(exc: BaseException) -> bool:
+    return isinstance(exc, NVIDIAAPIError) and exc.status_code in {429, 500, 502, 503, 504}
 
 class NVIDIAClient:
     """
@@ -59,6 +64,9 @@ class NVIDIAClient:
             max_retries=self.max_retries,
         )
 
+    _request_semaphore: Optional[asyncio.Semaphore] = None
+    _request_semaphore_limit: Optional[int] = None
+
     @property
     def client(self) -> httpx.AsyncClient:
         return self._get_client()
@@ -80,6 +88,16 @@ class NVIDIAClient:
             timeout=httpx.Timeout(self.timeout),
             headers=self._get_headers(),
         )
+
+    def _get_request_semaphore(self) -> asyncio.Semaphore:
+        limit = settings.nvidia_max_concurrency
+        if (
+            self.__class__._request_semaphore is None
+            or self.__class__._request_semaphore_limit != limit
+        ):
+            self.__class__._request_semaphore = asyncio.Semaphore(limit)
+            self.__class__._request_semaphore_limit = limit
+        return self.__class__._request_semaphore
 
     def _get_client(self) -> httpx.AsyncClient:
         loop = self._current_loop()
@@ -134,7 +152,10 @@ class NVIDIAClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        retry=(
+            retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError))
+            | retry_if_exception(_is_retryable_nvidia_error)
+        ),
         reraise=True,
     )
     async def post(
@@ -167,7 +188,8 @@ class NVIDIAClient:
             payload_size=len(str(data)),
         )
         try:
-            response = await self._get_client().post(url, json=data)
+            async with self._get_request_semaphore():
+                response = await self._get_client().post(url, json=data)
 
             logger.debug(
                 "nvidia_api_response",
@@ -190,6 +212,8 @@ class NVIDIAClient:
                 )
             
             return response.json()
+        except NVIDIAAPIError:
+            raise
         except httpx.TimeoutException as e:
             logger.error("nvidia_api_timeout", url=url, timeout=self.timeout)
             raise NVIDIAAPIError(f"Request timed out after {self.timeout}s", status_code=504)

@@ -18,7 +18,7 @@ async def process_webhook_async(
     source: IncidentSource,
     incident_id: str,
     user_id: str,
-) -> None:
+) -> Dict[str, Any]:
     try:
         if source == IncidentSource.GITHUB:
             try:
@@ -64,6 +64,7 @@ async def process_webhook_async(
             outcome=result.outcome.value,
             user_id=user_id,
         )
+        return result.to_dict()
     except Exception as exc:
         logger.error(
             "webhook_processing_failed",
@@ -72,6 +73,7 @@ async def process_webhook_async(
             error=str(exc),
             exc_info=True,
         )
+        raise
 
 
 def process_webhook_sync(
