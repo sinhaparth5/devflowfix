@@ -232,6 +232,19 @@ class ServiceContainer:
 
         return retriever
 
+    async def close(self) -> None:
+        """Close cached adapter resources held by the service container."""
+        for service in (self._embedding_adapter, self._llm_adapter, self._notification_service):
+            close = getattr(service, "close", None)
+            if close:
+                await close()
+
+        self._embedding_adapter = None
+        self._llm_adapter = None
+        self._notification_service = None
+        self._analyzer_service = None
+        self._retriever_service = None
+
 
 def get_service_container() -> ServiceContainer:
     return ServiceContainer.get_instance()

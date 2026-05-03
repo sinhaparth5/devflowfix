@@ -465,12 +465,16 @@ class EventProcessor:
                     )
             
             # Generate solutions using LLM
+            repository_code = await self._fetch_repository_code_context(
+                incident=incident,
+                context=enriched_context,
+            )
             solution = await self.analyzer.llm.generate_solution(
                 error_log=incident.error_log,
                 failure_type=analysis.category.value if analysis.category else "unknown",
                 root_cause=analysis.root_cause or "Unknown root cause",
                 context=enriched_context,
-                repository_code=None,  # Can be extended to fetch from repository
+                repository_code=repository_code,
             )
 
             # Log solutions to terminal
@@ -565,6 +569,130 @@ class EventProcessor:
                 reason=str(e),
             )
             return None
+
+    async def _fetch_repository_code_context(
+        self,
+        incident: Incident,
+        context: Dict[str, Any],
+        max_files: int = 3,
+        max_chars_per_file: int = 4000,
+    ) -> Optional[str]:
+        """
+        Fetch relevant repository files so the LLM can produce concrete code_changes.
+        """
+        if incident.source != IncidentSource.GITHUB:
+            return None
+
+        repository = context.get("repository") or incident.context.get("repository")
+        if not repository or "/" not in repository:
+            logger.info(
+                "repository_code_fetch_skipped",
+                incident_id=incident.incident_id,
+                reason="missing_repository",
+            )
+            return None
+
+        candidate_files = self._select_repository_code_files(context)
+        if not candidate_files:
+            logger.info(
+                "repository_code_fetch_skipped",
+                incident_id=incident.incident_id,
+                reason="no_candidate_files",
+            )
+            return None
+
+        owner, repo = repository.split("/", 1)
+        ref = context.get("commit") or context.get("branch") or incident.context.get("commit") or incident.context.get("branch")
+        user_id = context.get("user_id") or incident.context.get("user_id")
+
+        token = None
+        if user_id and hasattr(self.incident_repo, "db"):
+            try:
+                from app.services.github_token_manager import GitHubTokenManager
+
+                token = GitHubTokenManager(db=self.incident_repo.db).get_token(user_id, owner, repo)
+            except Exception as token_error:
+                logger.warning(
+                    "repository_code_token_lookup_failed",
+                    incident_id=incident.incident_id,
+                    error=str(token_error),
+                )
+
+        try:
+            import base64
+
+            from app.adapters.external.github.client import GitHubClient
+
+            snippets = []
+            async with GitHubClient(token=token) as github_client:
+                for file_path in candidate_files[:max_files]:
+                    try:
+                        current_file = await github_client.get_file_contents(
+                            owner=owner,
+                            repo=repo,
+                            path=file_path,
+                            ref=ref,
+                        )
+                        encoded = current_file.get("content", "")
+                        decoded = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                        snippets.append(
+                            f"## File: {file_path}\n```\n{decoded[:max_chars_per_file]}\n```"
+                        )
+                    except Exception as file_error:
+                        logger.warning(
+                            "repository_code_file_fetch_failed",
+                            incident_id=incident.incident_id,
+                            file_path=file_path,
+                            error=str(file_error),
+                        )
+
+            if not snippets:
+                return None
+
+            repository_code = "\n\n".join(snippets)
+            logger.info(
+                "repository_code_context_fetched",
+                incident_id=incident.incident_id,
+                files_count=len(snippets),
+                chars=len(repository_code),
+            )
+            return repository_code
+
+        except Exception as fetch_error:
+            logger.warning(
+                "repository_code_fetch_failed",
+                incident_id=incident.incident_id,
+                error=str(fetch_error),
+            )
+            return None
+
+    def _select_repository_code_files(self, context: Dict[str, Any]) -> list[str]:
+        candidate_files: list[str] = []
+
+        error_files = context.get("error_files")
+        if isinstance(error_files, dict):
+            candidate_files.extend(error_files.keys())
+
+        changed_files = context.get("changed_files")
+        if isinstance(changed_files, list):
+            candidate_files.extend(
+                path for path in changed_files if isinstance(path, str)
+            )
+
+        workflow_file = context.get("workflow_file")
+        if isinstance(workflow_file, str):
+            candidate_files.append(workflow_file)
+
+        seen = set()
+        selected = []
+        for path in candidate_files:
+            normalized = path.strip().lstrip("/")
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            selected.append(normalized)
+
+        return selected
 
     async def _attempt_post_analysis_pr(
         self,

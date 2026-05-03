@@ -2,6 +2,7 @@
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
 import json
+import asyncio
 
 import httpx
 import pytest
@@ -12,6 +13,20 @@ from app.adapters.ai.nvidia.client import (
     NVIDIAEmbeddingClient,
     NVIDIALLMClient,
 )
+
+
+def test_nvidia_client_recreates_http_client_when_event_loop_changes() -> None:
+    client = NVIDIALLMClient(api_key="test-key")
+    captured: list[httpx.AsyncClient] = []
+
+    async def capture_client() -> None:
+        captured.append(client.client)
+
+    asyncio.run(capture_client())
+    asyncio.run(capture_client())
+    asyncio.run(client.close())
+
+    assert captured[0] is not captured[1]
 
 
 @pytest.mark.asyncio

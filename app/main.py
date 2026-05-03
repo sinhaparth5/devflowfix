@@ -24,7 +24,7 @@ from app.middleware import (
     SecurityHeadersMiddleware,
     BrotliOrGzipMiddleware,
 )
-from app.dependencies import get_engine, get_db, get_event_processor
+from app.dependencies import get_engine, get_db, get_event_processor, get_service_container
 from app.api import router as api_router
 
 structlog.configure(
@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
 
     # Cleanup: Close persistent HTTP client
     from app.auth.zitadel import close_http_client
+    from app.adapters.cache.redis import close_redis_cache
+
+    await get_service_container().close()
+    await close_redis_cache()
     await close_http_client()
 
     logger.info("application_shutdown")

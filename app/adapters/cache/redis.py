@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
+import asyncio
 import json
 from typing import Optional, Any, List
 from urllib.parse import urlparse
@@ -52,6 +53,7 @@ class RedisCache:
 
         self.client: Optional[Redis] = None
         self._connection_pool: Optional[redis.ConnectionPool] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         logger.info(
             "redis_cache_initialized",
@@ -59,6 +61,16 @@ class RedisCache:
             max_connections=self.max_connections,
             socket_timeout=self.socket_timeout,
         )
+
+    def _current_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
+    def _connected_on_current_loop(self) -> bool:
+        loop = self._current_loop()
+        return self.client is not None and (self._loop is None or self._loop is loop)
 
     def _mask_password(self, url: str) -> str:
         """Mask password in URL for logging."""
@@ -85,9 +97,17 @@ class RedisCache:
 
     async def connect(self) -> None:
         """Establish connection to Redis."""
-        if self.client:
+        loop = self._current_loop()
+        if self.client and (self._loop is None or self._loop is loop):
+            if self._loop is None:
+                self._loop = loop
             logger.debug("redis_already_connected")
             return
+
+        if self.client:
+            logger.warning("redis_connection_recreated_for_event_loop")
+            self.client = None
+            self._connection_pool = None
 
         try:
             # Create connection pool
@@ -104,6 +124,7 @@ class RedisCache:
 
             # Test connection
             await self.client.ping()
+            self._loop = loop
 
             logger.info("redis_connected", url=self._mask_password(self.url))
 
@@ -117,10 +138,17 @@ class RedisCache:
     async def close(self) -> None:
         """Close Redis connection."""
         if self.client:
-            await self.client.close()
-            await self._connection_pool.disconnect()
+            try:
+                await self.client.close()
+                if self._connection_pool:
+                    await self._connection_pool.disconnect()
+            except RuntimeError as e:
+                if "Event loop is closed" not in str(e):
+                    raise
+                logger.warning("redis_close_skipped_closed_loop")
             self.client = None
             self._connection_pool = None
+            self._loop = None
             logger.info("redis_connection_closed")
 
     async def get(self, key: str) -> Optional[Any]:
@@ -133,7 +161,7 @@ class RedisCache:
         Returns:
             Cached value or None if not found
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -174,7 +202,7 @@ class RedisCache:
         Returns:
             True if successful, False otherwise
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -205,7 +233,7 @@ class RedisCache:
         Returns:
             True if key was deleted, False otherwise
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -227,7 +255,7 @@ class RedisCache:
         Returns:
             True if key exists, False otherwise
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -248,7 +276,7 @@ class RedisCache:
         Returns:
             List of values (None for missing keys)
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -286,7 +314,7 @@ class RedisCache:
         Returns:
             True if successful, False otherwise
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -325,7 +353,7 @@ class RedisCache:
         Returns:
             New value after increment, or None on error
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -348,7 +376,7 @@ class RedisCache:
         Returns:
             New value after decrement, or None on error
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -369,7 +397,7 @@ class RedisCache:
         Returns:
             True if successful, False otherwise
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:
@@ -391,7 +419,7 @@ class RedisCache:
         Returns:
             TTL in seconds, -1 if no expiry, -2 if key doesn't exist, None on error
         """
-        if not self.client:
+        if not self._connected_on_current_loop():
             await self.connect()
 
         try:

@@ -31,6 +31,9 @@ services:
     ports:
       - "8001:8000"
       - "5678:5678"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       ENVIRONMENT: dev
       PYTHONPATH: /app
@@ -38,6 +41,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_PASSWORD: ""
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
       PYTHONOPTIMIZE: "0"
     depends_on:
       migrate:

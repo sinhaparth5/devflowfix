@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Parth Sinha and Shine Gupta. All rights reserved.
 # DevFlowFix - Autonomous AI agent that detects, analyzes, and resolves CI/CD failures in real-time.
 
+import asyncio
 from typing import Optional, Dict, Any, List
 import httpx
 import structlog
@@ -48,11 +49,8 @@ class NVIDIAClient:
         if not self.api_key:
             raise ValueError("NVIDIA API key is required")
         
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=httpx.Timeout(self.timeout),
-            headers=self._get_headers(),
-        )
+        self._client: Optional[httpx.AsyncClient] = None
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
 
         logger.info(
             "nvidia_client_initialized",
@@ -60,6 +58,46 @@ class NVIDIAClient:
             timeout=self.timeout,
             max_retries=self.max_retries,
         )
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        return self._get_client()
+
+    @client.setter
+    def client(self, value: httpx.AsyncClient) -> None:
+        self._client = value
+        self._client_loop = self._current_loop()
+
+    def _current_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
+    def _create_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout),
+            headers=self._get_headers(),
+        )
+
+    def _get_client(self) -> httpx.AsyncClient:
+        loop = self._current_loop()
+        loop_changed = (
+            loop is not None
+            and self._client_loop is not None
+            and self._client_loop is not loop
+        )
+
+        if self._client is None or self._client.is_closed or loop_changed:
+            if loop_changed:
+                logger.warning("nvidia_client_recreated_for_event_loop")
+            self._client = self._create_client()
+            self._client_loop = loop
+        elif self._client_loop is None and loop is not None:
+            self._client_loop = loop
+
+        return self._client
 
     def _normalize_base_url(self, base_url: Optional[str]) -> str:
         """
@@ -129,7 +167,7 @@ class NVIDIAClient:
             payload_size=len(str(data)),
         )
         try:
-            response = await self.client.post(url, json=data)
+            response = await self._get_client().post(url, json=data)
 
             logger.debug(
                 "nvidia_api_response",
@@ -179,7 +217,7 @@ class NVIDIAClient:
         url = self._build_url(endpoint=endpoint)
 
         try:
-            response = await self.client.get(url)
+            response = await self._get_client().get(url)
 
             if response.status_code >= 400:
                 error_detail = self._extract_error_detail(response)
@@ -237,7 +275,15 @@ class NVIDIAClient:
         
     async def close(self):
         """ Close the HTTP client """
-        await self.client.aclose()
+        if self._client and not self._client.is_closed:
+            try:
+                await self._client.aclose()
+            except RuntimeError as e:
+                if "Event loop is closed" not in str(e):
+                    raise
+                logger.warning("nvidia_client_close_skipped_closed_loop")
+        self._client = None
+        self._client_loop = None
         logger.debug("nvidia_client_closed")
 
     async def __aenter__(self):

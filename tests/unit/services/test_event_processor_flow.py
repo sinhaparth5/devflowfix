@@ -3,6 +3,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+import base64
 
 import pytest
 
@@ -174,3 +175,44 @@ async def test_attempt_post_analysis_pr_records_created_pr(
     assert result is not None
     assert incident.context["automated_pr"]["number"] == 42
     assert incident.context["post_analysis"]["status"] == "pr_created"
+
+
+@pytest.mark.asyncio
+async def test_fetch_repository_code_context_fetches_candidate_files(
+    processor: EventProcessor,
+    incident: Incident,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeGitHubClient:
+        def __init__(self, token=None):
+            self.token = token
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+        async def get_file_contents(self, owner, repo, path, ref=None):
+            assert owner == "owner"
+            assert repo == "repo"
+            assert path == "src/hooks/useProducts.ts"
+            assert ref == "main"
+            return {
+                "content": base64.b64encode(b"const invalidTypeAssignment = true;\n").decode()
+            }
+
+    monkeypatch.setattr("app.adapters.external.github.client.GitHubClient", FakeGitHubClient)
+
+    repository_code = await processor._fetch_repository_code_context(
+        incident=incident,
+        context={
+            "repository": "owner/repo",
+            "branch": "main",
+            "error_files": {"src/hooks/useProducts.ts": [{"line": 12}]},
+        },
+    )
+
+    assert repository_code is not None
+    assert "## File: src/hooks/useProducts.ts" in repository_code
+    assert "invalidTypeAssignment" in repository_code
