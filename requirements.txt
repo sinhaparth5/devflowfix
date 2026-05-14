@@ -37,6 +37,7 @@ python-multipart
 python-json-logger
 python-dateutil
 pydantic[email]
+pre-commit
 orjson
 brotli  # High-performance compression (better than gzip)
 cachetools  # TTLCache for efficient token caching

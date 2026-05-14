@@ -17,6 +17,7 @@ dependencies = [
     "openai>=2.7.1",
     "passlib[bcrypt]>=1.7.4",
     "pgvector>=0.4.1",
+    "pre-commit>=4.0.1",
     "psycopg2-binary>=2.9.11",
     "pybreaker>=1.4.1",
     "pydantic[email]>=2.12.4",
@@ -47,3 +48,29 @@ dependencies = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "alembic",
+    "dist",
+    "build",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

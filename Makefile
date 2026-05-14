@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format clean docker-build docker-up deploy
+.PHONY: help install dev test test-cov lint format clean docker-build docker-up docker-down migrate migrate-create deploy-dev deploy-staging deploy-prod ruff-check ruff-format pre-commit-install pre-commit-run
 
 # Default target
 help:
@@ -8,7 +8,11 @@ help:
 	@echo "  make test          - Run tests"
 	@echo "  make test-cov      - Run tests with coverage report"
 	@echo "  make lint          - Run linters (ruff, mypy)"
-	@echo "  make format        - Format code (black, isort, ruff)"
+	@echo "  make format        - Format code (ruff)"
+	@echo "  make ruff-check    - Run Ruff lint checks"
+	@echo "  make ruff-format   - Run Ruff formatter"
+	@echo "  make pre-commit-install - Install pre-commit hooks"
+	@echo "  make pre-commit-run - Run pre-commit on all files"
 	@echo "  make clean         - Clean cache and build files"
 	@echo "  make docker-build  - Build Docker image"
 	@echo "  make docker-up     - Start Docker Compose stack"
@@ -40,7 +44,22 @@ lint:
 format:
 	@echo "Formatting code..."
 	uv run ruff format app tests
-	uv run isort app tests
+
+ruff-check:
+	@echo "Running Ruff checks..."
+	uv run ruff check app tests
+
+ruff-format:
+	@echo "Running Ruff formatter..."
+	uv run ruff format app tests
+
+pre-commit-install:
+	@echo "Installing pre-commit hooks..."
+	uv run pre-commit install
+
+pre-commit-run:
+	@echo "Running pre-commit on all files..."
+	uv run pre-commit run --all-files
 
 clean:
 	@echo "Cleaning cache and build files..."
